@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Guidely",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI browser co-pilot for seniors — powered by local Gemma via Ollama",
   "permissions": [
     "activeTab",
@@ -9,7 +9,8 @@
     "scripting"
   ],
   "host_permissions": [
-    "http://localhost:8000/*"
+    "http://localhost:8000/*",
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"

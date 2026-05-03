@@ -45,6 +45,7 @@ uvicorn main:app --port 8000
 2. Enable **Developer mode** (top-right toggle)
 3. Click **Load unpacked** → select the `extension/` folder
 4. The Guidely icon appears in your toolbar
+5. If Chrome shows a permission prompt, **Allow** — Guidely needs broad site access so `captureVisibleTab` can screenshot normal pages (e.g. google.com). Screenshots are only sent to your local backend.
 
 ### 4. Use it
 

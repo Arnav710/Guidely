@@ -244,10 +244,20 @@ async function onHelpClick() {
   let screenshot;
   try {
     const response = await chrome.runtime.sendMessage({ type: 'CAPTURE' });
-    if (response.error) throw new Error(response.error);
+    if (response && response.error) throw new Error(response.error);
+    if (!response || !response.screenshot) throw new Error('No screenshot returned');
     screenshot = response.screenshot;
   } catch (err) {
-    showSidebar('This page type isn\'t supported by Guidely.');
+    // captureVisibleTab fails on chrome://, PDF viewer, etc.; also fails if the
+    // extension lacks host permission for the page (fixed by <all_urls> in manifest).
+    const detail = err && err.message ? err.message : '';
+    const isRestricted =
+      /chrome:\/\//i.test(window.location.href) ||
+      /^(edge|brave|vivaldi):\/\//i.test(window.location.href);
+    const msg = isRestricted
+      ? 'Guidely can\'t run on this built-in browser page. Open a normal website instead.'
+      : 'Guidely couldn\'t capture a screenshot of this page. Try reloading the tab, or reload the extension in chrome://extensions if you just updated it.';
+    showSidebar(msg, '', detail ? `Details: ${detail}` : '');
     btn.disabled = false;
     btn.textContent = '💡 Help me';
     return;
