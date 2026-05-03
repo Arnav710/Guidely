@@ -33,6 +33,8 @@ class AnalyzeResponse(BaseModel):
     element_label: Optional[str] = None
     selector: Optional[str] = None
     model_used: Optional[str] = None
+    # Present only when POST /analyze?trace=1 — confirms payload sizes and Ollama timing (no raw prompts/images).
+    trace: Optional[dict] = None
 
 
 class ModelInfo(BaseModel):

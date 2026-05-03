@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException
+import logging
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from models import (
     AnalyzeRequest,
@@ -14,6 +15,8 @@ from ollama_client import (
     set_active_model,
     OllamaUnavailableError,
 )
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Guidely Backend", version="1.0.0")
 
@@ -68,7 +71,10 @@ async def set_model(body: SetModelRequest):
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
-async def analyze(request: AnalyzeRequest):
+async def analyze(
+    request: AnalyzeRequest,
+    trace: bool = Query(False, description="If true, include non-sensitive debug stats in the response."),
+):
     try:
         result = await call_ollama(
             screenshot_b64=request.screenshot,
@@ -76,19 +82,33 @@ async def analyze(request: AnalyzeRequest):
             history=request.history,
             model=request.model,
             question=request.question,
+            trace=trace,
         )
-    except OllamaUnavailableError:
-        raise HTTPException(
-            status_code=503,
-            detail="Guidely is offline. Please make sure Ollama is running.",
+    except OllamaUnavailableError as exc:
+        logger.warning("Ollama call failed: %s", str(exc)[:500])
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    instr = result.get("instruction")
+    if instr is None or (isinstance(instr, str) and not str(instr).strip()):
+        instr = "I couldn't figure out the next step. Try clicking 'Help me' again."
+
+    trace_payload = result.get("_trace") if trace else None
+
+    if trace:
+        logger.info(
+            "analyze trace model=%s ollama_ms=%s prompt_chars=%s image_b64_chars=%s dom=%s parse_ok=%s",
+            trace_payload.get("model") if trace_payload else None,
+            trace_payload.get("ollama_elapsed_ms") if trace_payload else None,
+            trace_payload.get("user_prompt_chars") if trace_payload else None,
+            trace_payload.get("image_base64_chars") if trace_payload else None,
+            trace_payload.get("dom_element_count") if trace_payload else None,
+            trace_payload.get("json_parsed_ok") if trace_payload else None,
         )
 
     return AnalyzeResponse(
-        instruction=result.get(
-            "instruction",
-            "I couldn't figure out the next step. Try clicking 'Help me' again.",
-        ),
+        instruction=instr,
         element_label=result.get("element_label"),
         selector=result.get("selector"),
         model_used=result.get("_model"),
+        trace=trace_payload,
     )

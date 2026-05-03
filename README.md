@@ -91,6 +91,24 @@ curl -X POST http://localhost:8000/analyze \
 
 ---
 
+## Verifying Ollama is really called
+
+Guidely does call Ollama on every successful `/analyze` (no shortcut). Replies can feel fast on a GPU, especially for short JSON.
+
+1. **Trace mode** — add `?trace=1` to the analyze URL. The JSON response includes `trace` with `ollama_elapsed_ms`, `image_base64_chars`, `dom_element_count`, `json_parsed_ok`, etc. (no screenshot or prompt text).
+
+   ```bash
+   curl -s -X POST 'http://localhost:8000/analyze?trace=1' -H 'Content-Type: application/json' -d '{"screenshot":"...", "dom_map":[], "history":[]}' | python3 -m json.tool
+   ```
+
+2. **Server logs** — run uvicorn with `--log-level info` and watch for lines like `ollama ok model=... elapsed_ms=...`.
+
+3. **Extension** — in `extension/content.js`, set `GUIDELY_DEBUG_TRACE = true`, reload the extension, then ask again; the sidebar footer shows the same trace summary.
+
+If Ollama returns an error in the JSON body (HTTP 200 with `"error": "..."`), the API now returns **503** with that message instead of a blank or generic answer.
+
+---
+
 ## Running tests
 
 ```bash

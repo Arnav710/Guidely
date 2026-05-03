@@ -4,6 +4,9 @@ const INTERACTIVE_SELECTOR = 'a, button, input, select, textarea, [role="button"
 const MAX_ELEMENTS = 30;
 const MAX_HISTORY = 10; // alternating user / assistant, last ~5 rounds
 
+// Set true to call /analyze?trace=1 and show Ollama timing + payload sizes in the sidebar (no secrets logged).
+const GUIDELY_DEBUG_TRACE = false;
+
 function getLabel(el) {
   if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
   if (el.placeholder) return el.placeholder.trim();
@@ -340,7 +343,10 @@ async function submitGuidelyQuestion() {
 
   let data;
   try {
-    const res = await fetch('http://localhost:8000/analyze', {
+    const analyzeUrl = GUIDELY_DEBUG_TRACE
+      ? 'http://localhost:8000/analyze?trace=1'
+      : 'http://localhost:8000/analyze';
+    const res = await fetch(analyzeUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -368,6 +374,18 @@ async function submitGuidelyQuestion() {
 
   setInstruction(data.instruction);
   document.getElementById('guidely-model-badge').textContent = data.model_used ? `Model: ${data.model_used}` : '';
+  if (data.trace) {
+    const t = data.trace;
+    const bits = [
+      t.ollama_elapsed_ms != null ? `${t.ollama_elapsed_ms} ms` : null,
+      t.image_base64_chars != null ? `img ${t.image_base64_chars} b64 chars` : null,
+      t.dom_element_count != null ? `dom ${t.dom_element_count}` : null,
+      t.json_parsed_ok != null ? `json_ok=${t.json_parsed_ok}` : null,
+    ].filter(Boolean);
+    document.getElementById('guidely-status').textContent = bits.join(' · ');
+  } else {
+    document.getElementById('guidely-status').textContent = '';
+  }
   highlightElement(data.selector);
 
   guidely_history.push({ role: 'user', content: userLine });

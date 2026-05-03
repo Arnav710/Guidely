@@ -69,6 +69,31 @@ async def test_analyze_passes_question_to_ollama():
 
 
 @pytest.mark.asyncio
+async def test_analyze_trace_query_passes_through():
+    mock_result = {
+        "instruction": "OK",
+        "element_label": None,
+        "selector": None,
+        "_model": "gemma4:e2b",
+        "_trace": {"model": "gemma4:e2b", "ollama_elapsed_ms": 12.3},
+    }
+    with patch("main.call_ollama", new_callable=AsyncMock, return_value=mock_result):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/analyze?trace=1",
+                json={
+                    "screenshot": "aGVsbG8=",
+                    "dom_map": [],
+                    "history": [],
+                },
+            )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["trace"] is not None
+    assert data["trace"]["ollama_elapsed_ms"] == 12.3
+
+
+@pytest.mark.asyncio
 async def test_analyze_returns_503_when_ollama_unavailable():
     from ollama_client import OllamaUnavailableError
     with patch("main.call_ollama", new_callable=AsyncMock, side_effect=OllamaUnavailableError("not running")):
@@ -79,7 +104,7 @@ async def test_analyze_returns_503_when_ollama_unavailable():
                 "history": [],
             })
     assert response.status_code == 503
-    assert "offline" in response.json()["detail"].lower()
+    assert "not running" in response.json()["detail"].lower()
 
 
 # ── /models ───────────────────────────────────────────────────────────────────

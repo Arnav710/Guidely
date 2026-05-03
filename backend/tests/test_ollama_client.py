@@ -53,6 +53,23 @@ async def test_call_ollama_returns_parsed_response():
 
 
 @pytest.mark.asyncio
+async def test_call_ollama_raises_when_body_contains_error_field():
+    from unittest.mock import MagicMock
+    with patch("ollama_client._model_detected", True):
+        with patch("ollama_client.httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client_class.return_value.__aenter__.return_value = mock_client
+            mock_response = MagicMock()
+            mock_response.raise_for_status = lambda: None
+            mock_response.json.return_value = {"error": "model runner exploded"}
+            mock_client.post.return_value = mock_response
+
+            elements = [DomElement(id=1, tag="button", type="submit", label="Next", selector="button.next", visible=True)]
+            with pytest.raises(OllamaUnavailableError, match="model runner"):
+                await call_ollama(screenshot_b64="abc", elements=elements, history=[])
+
+
+@pytest.mark.asyncio
 async def test_call_ollama_raises_on_connection_error():
     import httpx as _httpx
     with patch("ollama_client._model_detected", True):

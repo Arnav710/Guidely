@@ -10,7 +10,9 @@ Model-switching design:
 
 import re
 import json
-from typing import Optional
+import logging
+import time
+from typing import Optional, Any
 import httpx
 from models import DomElement, HistoryEntry
 from prompt import build_system_prompt, build_user_turn
@@ -33,9 +35,21 @@ _MODEL_PREFERENCE = [
 _active_model: str = "gemma4:e2b"  # overwritten at first real call if needed
 _model_detected: bool = False
 
+logger = logging.getLogger(__name__)
+
 
 class OllamaUnavailableError(Exception):
     pass
+
+
+def _ollama_generate_error_message(body: dict) -> Optional[str]:
+    """Ollama often returns HTTP 200 with {\"error\": \"...\"} when inference fails."""
+    err = body.get("error")
+    if err is None:
+        return None
+    if isinstance(err, str) and err.strip():
+        return err.strip()[:800]
+    return str(err)[:800]
 
 
 async def _detect_best_model() -> str:
@@ -95,6 +109,7 @@ async def call_ollama(
     history: list[HistoryEntry],
     model: Optional[str] = None,
     question: Optional[str] = None,
+    trace: bool = False,
     retry: bool = True,
 ) -> dict:
     global _active_model, _model_detected
@@ -109,6 +124,16 @@ async def call_ollama(
     system = build_system_prompt()
     user_text = build_user_turn(elements, history, question=question)
 
+    trace_info: dict[str, Any] = {
+        "model": chosen_model,
+        "dom_element_count": len(elements),
+        "history_entries": len(history),
+        "image_base64_chars": len(screenshot_b64 or ""),
+        "user_prompt_chars": len(user_text),
+        "system_prompt_chars": len(system),
+        "question_provided": bool((question or "").strip()),
+    }
+
     payload = {
         "model": chosen_model,
         "system": system,
@@ -118,36 +143,75 @@ async def call_ollama(
         "format": "json",
     }
 
+    async def _do_post(client: httpx.AsyncClient) -> tuple[dict, float]:
+        t0 = time.monotonic()
+        response = await client.post(OLLAMA_GENERATE_URL, json=payload)
+        elapsed_ms = (time.monotonic() - t0) * 1000.0
+        response.raise_for_status()
+        body = response.json()
+        return body, elapsed_ms
+
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(OLLAMA_GENERATE_URL, json=payload)
-            response.raise_for_status()
+            body, elapsed_ms = await _do_post(client)
     except httpx.ConnectError:
         raise OllamaUnavailableError("Ollama is not running at localhost:11434")
     except httpx.RemoteProtocolError as exc:
         raise OllamaUnavailableError(f"Ollama disconnected unexpectedly: {exc}")
     except httpx.HTTPStatusError as exc:
-        raise OllamaUnavailableError(f"Ollama returned error: {exc.response.status_code}")
+        raise OllamaUnavailableError(f"Ollama returned HTTP {exc.response.status_code}")
 
-    raw = response.json().get("response", "")
+    err_msg = _ollama_generate_error_message(body)
+    if err_msg:
+        logger.warning("Ollama generate error (model=%s): %s", chosen_model, err_msg[:300])
+        raise OllamaUnavailableError(f"Ollama could not run the model: {err_msg}")
+
+    raw = body.get("response") or ""
+    trace_info["ollama_elapsed_ms"] = round(elapsed_ms, 2)
+    trace_info["ollama_response_chars"] = len(raw)
+
+    def _finish(result: dict, parsed_ok: bool) -> dict:
+        result["_model"] = chosen_model
+        trace_info["json_parsed_ok"] = parsed_ok
+        if trace:
+            result["_trace"] = trace_info
+        logger.info(
+            "ollama ok model=%s elapsed_ms=%.1f response_chars=%s parsed=%s dom=%s img_b64_len=%s",
+            chosen_model,
+            elapsed_ms,
+            len(raw),
+            parsed_ok,
+            len(elements),
+            len(screenshot_b64 or ""),
+        )
+        return result
 
     try:
         result = extract_json(raw)
-        result["_model"] = chosen_model
-        return result
+        return _finish(result, True)
     except (ValueError, json.JSONDecodeError):
+        trace_info["json_parse_error"] = True
         if retry:
             payload["prompt"] += "\n\nYou MUST respond with ONLY the JSON object. No other text."
             try:
                 async with httpx.AsyncClient(timeout=120.0) as client:
-                    response = await client.post(OLLAMA_GENERATE_URL, json=payload)
-                    response.raise_for_status()
-                raw = response.json().get("response", "")
-                result = extract_json(raw)
-                result["_model"] = chosen_model
-                return result
-            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.HTTPStatusError):
-                pass
-            except (ValueError, json.JSONDecodeError):
-                pass
-        return {"instruction": raw.strip(), "element_label": None, "selector": None, "_model": chosen_model}
+                    body2, elapsed2 = await _do_post(client)
+                err2 = _ollama_generate_error_message(body2)
+                if err2:
+                    raise OllamaUnavailableError(f"Ollama (retry): {err2}")
+                raw = body2.get("response") or ""
+                trace_info["ollama_retry_elapsed_ms"] = round(elapsed2, 2)
+                trace_info["ollama_response_chars"] = len(raw)
+                try:
+                    result = extract_json(raw)
+                    return _finish(result, True)
+                except (ValueError, json.JSONDecodeError):
+                    pass
+            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.HTTPStatusError) as exc:
+                logger.warning("Ollama retry HTTP failed: %s", exc)
+            except OllamaUnavailableError:
+                raise
+        return _finish(
+            {"instruction": raw.strip(), "element_label": None, "selector": None},
+            False,
+        )
