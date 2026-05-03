@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 280px;
+      padding: 20px;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #fff;
+    }
+    h1 { font-size: 22px; color: #FF6B35; margin-bottom: 4px; font-weight: 700; }
+    .tagline { font-size: 12px; color: #888; margin-bottom: 16px; }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 20px;
+    }
+    #status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #ccc;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    #status-dot.online  { background: #2ecc71; }
+    #status-dot.offline { background: #e74c3c; }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #aaa;
+      margin-bottom: 6px;
+    }
+    select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #333;
+      background: #fafafa;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    select:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    button.apply-btn {
+      width: 100%;
+      padding: 9px;
+      background: #FF6B35;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button.apply-btn:hover { background: #e05a28; }
+    button.apply-btn:disabled { background: #aaa; cursor: not-allowed; }
+
+    #model-feedback {
+      font-size: 12px;
+      margin-top: 8px;
+      min-height: 16px;
+      color: #555;
+    }
+    #model-feedback.ok  { color: #2ecc71; }
+    #model-feedback.err { color: #e74c3c; }
+
+    .divider { border: none; border-top: 1px solid #eee; margin: 16px 0; }
+    .hint {
+      font-size: 12px;
+      color: #aaa;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <h1>💡 Guidely</h1>
+  <p class="tagline">AI browser co-pilot for seniors</p>
+
+  <div class="status-row">
+    <div id="status-dot"></div>
+    <span id="status-text">Checking backend…</span>
+  </div>
+
+  <div class="section-label">Active Model</div>
+  <select id="model-select" disabled>
+    <option value="">Loading models…</option>
+  </select>
+  <button class="apply-btn" id="apply-btn" disabled>Switch Model</button>
+  <div id="model-feedback"></div>
+
+  <hr class="divider">
+  <p class="hint">Click <strong>💡 Help me</strong> on any page to get step-by-step guidance.</p>
+
+  <script src="popup.js"></script>
+</body>
+</html>
