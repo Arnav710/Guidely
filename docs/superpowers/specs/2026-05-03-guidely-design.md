@@ -32,13 +32,13 @@ Everything runs on-device. No data leaves the user's machine.
 | Judging Criterion | How Guidely Addresses It |
 |---|---|
 | **Impact (30%)** | Targets 1B+ elderly internet users globally; solves a universal, high-stakes pain point (forms, logins, payments, healthcare bookings) |
-| **Technical Execution (30%)** | Gemma 4 multimodal reasoning for spatial element detection; structured JSON output; local-first architecture |
+| **Technical Execution (30%)** | Gemma 4 multimodal reasoning over screenshot + DOM map; CSS selector-based pixel-perfect element targeting; structured JSON output; local-first architecture |
 | **Communication (40%)** | Clean, demo-friendly flow; single button → screenshot → highlight + instruction; emotionally resonant framing around privacy and dignity |
 
 **Gemma 4 capabilities used:**
 - Multimodal input (screenshot understanding)
-- Spatial reasoning (element coordinate estimation)
-- Instruction following (structured JSON output)
+- Structured reasoning over DOM element map + visual context
+- Instruction following (structured JSON output with CSS selector targeting)
 - Local deployment via Ollama (privacy guarantee)
 
 ---
@@ -85,9 +85,9 @@ Everything runs on-device. No data leaves the user's machine.
 
 **`content.js`** (injected into every page)
 - Renders a floating "Help me" button (bottom-right corner, always visible)
-- On click: requests screenshot from `background.js`, then POSTs `{ screenshot, history }` to `localhost:8000/analyze`
+- On click: serializes interactive DOM elements into a compact element map (see Section 5.1), requests screenshot from `background.js`, then POSTs `{ screenshot, dom_map, history }` to `localhost:8000/analyze`
 - On response: renders the instruction in a right-side sliding sidebar panel
-- Renders a highlight overlay `<div>` absolutely positioned at `(x * window.innerWidth, y * window.innerHeight)` with a pulsing CSS ring animation
+- Uses `document.querySelector(selector)` with the returned CSS selector to find the target element; calls `getBoundingClientRect()` to size and position the highlight ring exactly over it; calls `scrollIntoView()` if the element is off-screen
 - Maintains a conversation history array (last N turns) passed on each request to support follow-up context
 - Clears the highlight on the next "Help me" click
 
@@ -104,8 +104,12 @@ Everything runs on-device. No data leaves the user's machine.
 ```json
 {
   "screenshot": "<base64-encoded PNG>",
+  "dom_map": [
+    { "id": 1, "tag": "input", "type": "text", "label": "First Name", "selector": "#fname", "visible": true },
+    { "id": 2, "tag": "button", "type": "submit", "label": "Next", "selector": "button.next-step", "visible": true }
+  ],
   "history": [
-    { "role": "assistant", "content": "Click the blue Sign In button" }
+    { "role": "assistant", "content": "Type your first name in the 'First Name' box." }
   ]
 }
 ```
@@ -113,18 +117,18 @@ Everything runs on-device. No data leaves the user's machine.
 **Response body:**
 ```json
 {
-  "instruction": "Click the blue 'Next' button to continue",
+  "instruction": "Click the blue 'Next' button to continue.",
   "element_label": "Next button",
-  "position": { "x": 0.82, "y": 0.91 }
+  "selector": "button.next-step"
 }
 ```
 
 **Processing steps:**
 1. Decode base64 screenshot
-2. Build prompt (see Section 5)
+2. Build prompt with screenshot + serialized DOM map (see Section 5)
 3. POST to `http://localhost:11434/api/generate` with model `gemma4`, stream: false
 4. Extract JSON block from Gemma's response using regex
-5. Validate all required fields are present
+5. Validate that `instruction` and `selector` are present
 6. Return parsed response to extension
 
 **CORS:** Allow `chrome-extension://` origins.
@@ -140,54 +144,82 @@ Everything runs on-device. No data leaves the user's machine.
 
 ## 5. Prompt Design
 
-The system prompt instructs Gemma to behave as a patient digital guide for an elderly user. It must respond **only** with valid JSON matching the schema below — no prose outside the JSON block.
+The system prompt instructs Gemma to behave as a patient digital guide for an elderly user. It receives both the screenshot (visual context) and a serialized DOM element map (structured context). It must respond **only** with valid JSON — no prose outside the JSON block.
 
-**System prompt:**
+### 5.1 DOM Map Serialization
+
+`content.js` builds the DOM map before each request by querying all interactive elements:
+
+```javascript
+const INTERACTIVE = 'a, button, input, select, textarea, [role="button"], [tabindex]';
+document.querySelectorAll(INTERACTIVE)
+```
+
+For each element, it captures:
+- `tag` — element type (input, button, a, select, etc.)
+- `type` — input type if applicable (text, email, password, submit, etc.)
+- `label` — derived from `aria-label`, `placeholder`, `innerText`, or associated `<label>` element (in that order)
+- `selector` — a unique CSS selector (prefer `#id`, fall back to a short stable path)
+- `visible` — true if the element is in the viewport and not hidden
+
+Elements with no discernible label and no ID are skipped. The map is capped at 30 elements to keep the prompt token-efficient.
+
+### 5.2 System Prompt
+
 ```
 You are Guidely, a patient and friendly assistant helping elderly people use the internet.
-You are given a screenshot of a webpage the user is currently viewing.
-Your job is to give them ONE clear, simple next step — written in plain English with no jargon.
+You are given:
+  1. A screenshot of the webpage the user is currently viewing
+  2. A list of interactive elements currently on the page (their labels and CSS selectors)
+
+Your job is to give the user ONE clear, simple next step — written in plain English with no jargon.
 Speak as if explaining to someone who has never used a computer before.
 Be warm, calm, and encouraging.
 
 You MUST respond with ONLY valid JSON in this exact format:
 {
   "instruction": "<one sentence telling the user what to do next>",
-  "element_label": "<name/description of the UI element they should interact with>",
-  "position": { "x": <0.0 to 1.0>, "y": <0.0 to 1.0> }
+  "element_label": "<label of the element from the provided list, or null if none>",
+  "selector": "<CSS selector of the element from the provided list, or null if none>"
 }
 
-The x and y values are the normalized screen coordinates (0,0 = top-left, 1,1 = bottom-right)
-of the center of the element the user should interact with.
-If there is no specific element to interact with (e.g. you are just providing information),
-set position to { "x": 0.5, "y": 0.5 }.
-
+Only use selectors from the provided element list. Do not invent selectors.
+If no specific element action is needed, set both element_label and selector to null.
 Do not include any text outside the JSON block.
 ```
 
-**User turn:**
+### 5.3 User Turn
+
 ```
-Here is a screenshot of the webpage I am looking at. What should I do next?
-[base64 image attached]
+Here is the current page. What should I do next?
+
+Interactive elements on the page:
+[serialized DOM map as JSON array]
+
+[screenshot attached as base64 image]
 ```
 
-For follow-up turns, prior assistant responses are prepended as conversation history so Gemma can guide sequentially without repeating itself.
+For follow-up turns, prior assistant instructions are prepended as conversation history so Gemma guides sequentially without repeating steps already completed.
 
 ---
 
 ## 6. Data Flow (end-to-end)
 
 ```
-1. User clicks "Help me" floating button
-2. content.js sends message to background.js: { type: "CAPTURE" }
-3. background.js calls chrome.tabs.captureVisibleTab() → base64 PNG
-4. background.js replies to content.js with { screenshot: "<base64>" }
-5. content.js POSTs { screenshot, history } to http://localhost:8000/analyze
-6. FastAPI backend constructs prompt, calls Ollama
-7. Gemma 4 returns JSON: { instruction, element_label, position }
-8. FastAPI validates and returns JSON to extension
-9. content.js displays instruction in sidebar
-10. content.js draws pulsing highlight ring at (position.x * innerWidth, position.y * innerHeight)
+1.  User clicks "Help me" floating button
+2.  content.js serializes interactive DOM elements → dom_map (up to 30 elements)
+3.  content.js sends message to background.js: { type: "CAPTURE" }
+4.  background.js calls chrome.tabs.captureVisibleTab() → base64 PNG
+5.  background.js replies to content.js with { screenshot: "<base64>" }
+6.  content.js POSTs { screenshot, dom_map, history } to http://localhost:8000/analyze
+7.  FastAPI backend constructs prompt (screenshot + dom_map), calls Ollama
+8.  Gemma 4 returns JSON: { instruction, element_label, selector }
+9.  FastAPI validates and returns JSON to extension
+10. content.js displays instruction in sidebar
+11. content.js calls document.querySelector(selector) → finds the exact DOM element
+12. content.js calls element.scrollIntoView() if element is off-screen
+13. content.js reads element.getBoundingClientRect() → sizes and positions highlight ring exactly
+14. Pulsing ring is rendered over the element; does not interfere with clicks (pointer-events: none)
 ```
 
 ---
@@ -197,10 +229,11 @@ For follow-up turns, prior assistant responses are prepended as conversation his
 | Failure Scenario | Behavior |
 |---|---|
 | Ollama not running | Backend returns `503`; extension shows "Guidely is offline. Please make sure Ollama is running." |
-| Gemma returns malformed JSON | Backend retries once with a stricter prompt ("You must respond with ONLY the JSON object, nothing else."); on second failure returns `{ instruction: <raw text>, element_label: null, position: null }` — sidebar shows instruction only, no highlight |
+| Gemma returns malformed JSON | Backend retries once with a stricter prompt ("You must respond with ONLY the JSON object, nothing else."); on second failure returns `{ instruction: <raw text>, element_label: null, selector: null }` — sidebar shows instruction only, no highlight |
+| Gemma returns a selector not in the dom_map | `content.js` attempts `document.querySelector(selector)` anyway; if it returns null, highlight is skipped and instruction-only is shown |
 | Screenshot capture fails (PDF, `chrome://` page, etc.) | `background.js` catches the error; extension shows "This page type isn't supported." |
 | Backend unreachable (not started) | `content.js` fetch timeout/error; extension shows "Could not connect to Guidely. Please start the backend." |
-| `position` is null or out of range | Sidebar shows instruction; highlight overlay is not rendered |
+| `selector` is null | Sidebar shows instruction; highlight overlay is not rendered |
 
 ---
 
@@ -232,23 +265,28 @@ guidely/
 
 ## 9. Highlight Overlay Implementation
 
-The highlight is a `<div>` injected into the page body with:
+The highlight is a `<div>` injected into the page body. Its size and position are derived from the target element's `getBoundingClientRect()`, so it wraps the element exactly regardless of its dimensions.
 
-```css
-position: fixed;
-pointer-events: none;          /* doesn't interfere with clicks */
-border: 3px solid #FF6B35;     /* warm orange — visible, not alarming */
-border-radius: 8px;
-width: 120px;
-height: 48px;
-transform: translate(-50%, -50%);
-animation: guidely-pulse 1.2s ease-in-out infinite;
-z-index: 2147483647;           /* always on top */
+```javascript
+const rect = element.getBoundingClientRect();
+const overlay = document.createElement('div');
+overlay.id = 'guidely-highlight';
+Object.assign(overlay.style, {
+  position: 'fixed',
+  top:    `${rect.top    - 4}px`,
+  left:   `${rect.left   - 4}px`,
+  width:  `${rect.width  + 8}px`,
+  height: `${rect.height + 8}px`,
+  border: '3px solid #FF6B35',   /* warm orange — visible, not alarming */
+  borderRadius: '8px',
+  pointerEvents: 'none',         /* doesn't interfere with clicks */
+  animation: 'guidely-pulse 1.2s ease-in-out infinite',
+  zIndex: '2147483647',          /* always on top */
+});
+document.body.appendChild(overlay);
 ```
 
-Positioned at `left: position.x * 100vw`, `top: position.y * 100vh`. Since Gemma estimates the center of the element, the `translate(-50%, -50%)` centers the ring on that point.
-
-The fixed size (120×48px) is intentional — most interactive elements (buttons, inputs, links) fit within this box, and an approximate ring is more helpful than no ring.
+The 4px padding on each side prevents the ring from sitting flush against the element's edge. On the next "Help me" click, the overlay is removed and redrawn on the new target.
 
 ---
 
@@ -259,7 +297,7 @@ The fixed size (120×48px) is intentional — most interactive elements (buttons
 - Continuous/proactive monitoring mode
 - User accounts, settings persistence, or onboarding flow
 - Cloud deployment or remote model hosting
-- DOM parsing or accessibility tree traversal (coordinate-based targeting only)
+- Automatic form-filling or DOM mutation on behalf of the user
 - Mobile browser support
 
 ---
