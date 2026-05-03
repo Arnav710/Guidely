@@ -1,18 +1,23 @@
 import json
+from typing import Optional
 from models import DomElement, HistoryEntry
 
 SYSTEM_PROMPT = """You are Guidely, a patient and friendly assistant helping elderly people use the internet.
 You are given:
   1. A screenshot of the webpage the user is currently viewing
   2. A list of interactive elements currently on the page (their labels and CSS selectors)
+  3. Sometimes a specific question from the user about this page
 
-Your job is to give the user ONE clear, simple next step — written in plain English with no jargon.
-Speak as if explaining to someone who has never used a computer before.
+Your job:
+  - If they asked a question: answer it clearly using the screenshot and element list. You may use 2–4 short sentences in "instruction" if needed.
+  - If they did not ask a question: give ONE clear, simple next step for what to do on this page.
+
+Always write in plain English with no jargon. Speak as if explaining to someone who has never used a computer before.
 Be warm, calm, and encouraging.
 
 You MUST respond with ONLY valid JSON in this exact format:
 {
-  "instruction": "<one sentence telling the user what to do next>",
+  "instruction": "<your answer or next-step guidance>",
   "element_label": "<label of the element from the provided list, or null if none>",
   "selector": "<CSS selector of the element from the provided list, or null if none>"
 }
@@ -26,7 +31,11 @@ def build_system_prompt() -> str:
     return SYSTEM_PROMPT
 
 
-def build_user_turn(elements: list[DomElement], history: list[HistoryEntry]) -> str:
+def build_user_turn(
+    elements: list[DomElement],
+    history: list[HistoryEntry],
+    question: Optional[str] = None,
+) -> str:
     capped = elements[:30]
     dom_json = json.dumps(
         [{"id": e.id, "tag": e.tag, "type": e.type, "label": e.label, "selector": e.selector} for e in capped],
@@ -36,10 +45,16 @@ def build_user_turn(elements: list[DomElement], history: list[HistoryEntry]) -> 
     history_block = ""
     if history:
         lines = [f"  [{h.role}]: {h.content}" for h in history]
-        history_block = "\nPrevious steps already completed:\n" + "\n".join(lines) + "\n"
+        history_block = "\nConversation so far:\n" + "\n".join(lines) + "\n"
+
+    q = (question or "").strip()
+    if q:
+        ask_block = f'The user\'s question:\n"{q}"\n\nAnswer using the screenshot and the element list below.\n\n'
+    else:
+        ask_block = "The user did not type a specific question — suggest the single best next step for this page.\n\n"
 
     return (
         f"{history_block}"
-        f"Here is the current page. What should I do next?\n\n"
+        f"{ask_block}"
         f"Interactive elements on the page:\n{dom_json}"
     )

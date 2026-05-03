@@ -75,6 +75,7 @@ async def analyze(request: AnalyzeRequest):
             elements=request.dom_map,
             history=request.history,
             model=request.model,
+            question=request.question,
         )
     except OllamaUnavailableError:
         raise HTTPException(

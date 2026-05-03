@@ -94,6 +94,7 @@ async def call_ollama(
     elements: list[DomElement],
     history: list[HistoryEntry],
     model: Optional[str] = None,
+    question: Optional[str] = None,
     retry: bool = True,
 ) -> dict:
     global _active_model, _model_detected
@@ -106,7 +107,7 @@ async def call_ollama(
     chosen_model = model or _active_model
 
     system = build_system_prompt()
-    user_text = build_user_turn(elements, history)
+    user_text = build_user_turn(elements, history, question=question)
 
     payload = {
         "model": chosen_model,

@@ -2,6 +2,7 @@
 
 const INTERACTIVE_SELECTOR = 'a, button, input, select, textarea, [role="button"], [tabindex]';
 const MAX_ELEMENTS = 30;
+const MAX_HISTORY = 10; // alternating user / assistant, last ~5 rounds
 
 function getLabel(el) {
   if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
@@ -58,7 +59,6 @@ function buildDomMap() {
   return map;
 }
 
-// Exposed for manual devtools testing
 window.__guidely_buildDomMap = buildDomMap;
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
@@ -87,8 +87,8 @@ const STYLES = `
   #guidely-sidebar {
     position: fixed;
     top: 0;
-    right: -360px;
-    width: 340px;
+    right: -380px;
+    width: 360px;
     height: 100vh;
     z-index: 2147483645;
     background: white;
@@ -98,36 +98,77 @@ const STYLES = `
     display: flex;
     flex-direction: column;
     padding: 24px;
+    padding-top: 48px;
     box-sizing: border-box;
     overflow-y: auto;
+    gap: 12px;
   }
   #guidely-sidebar.open { right: 0; }
   #guidely-sidebar-title {
     font-size: 20px;
     font-weight: 700;
     color: #FF6B35;
-    margin-bottom: 16px;
+    margin: 0;
   }
+  #guidely-ask-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #444;
+    margin: 0;
+  }
+  #guidely-question {
+    width: 100%;
+    min-height: 88px;
+    padding: 12px;
+    font-size: 15px;
+    line-height: 1.45;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    resize: vertical;
+    box-sizing: border-box;
+    font-family: system-ui, sans-serif;
+  }
+  #guidely-question:focus {
+    outline: none;
+    border-color: #FF6B35;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2);
+  }
+  #guidely-send {
+    width: 100%;
+    padding: 12px 16px;
+    font-size: 16px;
+    font-weight: 600;
+    color: white;
+    background: #FF6B35;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-family: system-ui, sans-serif;
+  }
+  #guidely-send:hover:not(:disabled) { background: #e05a28; }
+  #guidely-send:disabled { background: #aaa; cursor: not-allowed; }
   #guidely-instruction {
-    font-size: 18px;
-    line-height: 1.6;
+    font-size: 17px;
+    line-height: 1.55;
     color: #222;
     background: #FFF5F0;
     border-left: 4px solid #FF6B35;
-    padding: 16px;
+    padding: 14px 16px;
     border-radius: 8px;
-    margin-bottom: 16px;
+    margin: 0;
+    min-height: 48px;
   }
   #guidely-model-badge {
     font-size: 11px;
     color: #999;
-    margin-bottom: 12px;
     font-family: monospace;
+    margin: 0;
   }
   #guidely-status {
-    font-size: 14px;
+    font-size: 13px;
     color: #888;
     margin-top: auto;
+    padding-top: 8px;
   }
   #guidely-close {
     position: absolute;
@@ -191,53 +232,84 @@ function highlightElement(selector) {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
+const guidely_history = [];
+let guidely_sidebar_wired = false;
+
 function getOrCreateSidebar() {
   let sidebar = document.getElementById('guidely-sidebar');
   if (sidebar) return sidebar;
+
   sidebar = document.createElement('div');
   sidebar.id = 'guidely-sidebar';
   sidebar.innerHTML = `
-    <button id="guidely-close" title="Close">✕</button>
+    <button type="button" id="guidely-close" title="Close">✕</button>
     <div id="guidely-sidebar-title">💡 Guidely</div>
+    <p id="guidely-ask-label">Your question</p>
+    <textarea id="guidely-question" rows="4" maxlength="2000"
+      placeholder="Ask anything about this page… (or leave blank for a suggested next step)"></textarea>
+    <button type="button" id="guidely-send">Ask Guidely</button>
     <div id="guidely-instruction"></div>
     <div id="guidely-model-badge"></div>
     <div id="guidely-status"></div>
   `;
   document.body.appendChild(sidebar);
+
   document.getElementById('guidely-close').addEventListener('click', () => {
     sidebar.classList.remove('open');
     clearHighlight();
   });
+
+  if (!guidely_sidebar_wired) {
+    guidely_sidebar_wired = true;
+    document.getElementById('guidely-send').addEventListener('click', submitGuidelyQuestion);
+    document.getElementById('guidely-question').addEventListener('keydown', (ev) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
+        ev.preventDefault();
+        submitGuidelyQuestion();
+      }
+    });
+  }
+
   return sidebar;
 }
 
-function showSidebar(instruction, modelUsed = '', status = '') {
+function setInstruction(htmlOrText, isPlainText = true) {
+  const el = document.getElementById('guidely-instruction');
+  if (isPlainText) el.textContent = htmlOrText;
+  else el.innerHTML = htmlOrText;
+}
+
+function showSidebarOpen() {
   const sidebar = getOrCreateSidebar();
-  document.getElementById('guidely-instruction').textContent = instruction;
-  document.getElementById('guidely-model-badge').textContent = modelUsed ? `Model: ${modelUsed}` : '';
-  document.getElementById('guidely-status').textContent = status;
   sidebar.classList.add('open');
 }
 
-// ─── Help Button ──────────────────────────────────────────────────────────────
+// ─── Ask flow ─────────────────────────────────────────────────────────────────
 
-const guidely_history = [];
-
-function getOrCreateButton() {
-  let btn = document.getElementById('guidely-btn');
-  if (btn) return btn;
-  btn = document.createElement('button');
-  btn.id = 'guidely-btn';
-  btn.textContent = '💡 Help me';
-  document.body.appendChild(btn);
-  return btn;
+function openAskPanel() {
+  injectStyles();
+  getOrCreateSidebar();
+  setInstruction(
+    'Type a question above, or leave it empty and tap “Ask Guidely” for a quick suggestion for this page.',
+  );
+  document.getElementById('guidely-model-badge').textContent = '';
+  document.getElementById('guidely-status').textContent = '';
+  showSidebarOpen();
+  const ta = document.getElementById('guidely-question');
+  ta.focus();
 }
 
-async function onHelpClick() {
-  const btn = document.getElementById('guidely-btn');
-  btn.disabled = true;
-  btn.textContent = 'Thinking…';
+async function submitGuidelyQuestion() {
+  const sendBtn = document.getElementById('guidely-send');
+  const floatBtn = document.getElementById('guidely-btn');
+  const questionEl = document.getElementById('guidely-question');
+  const question = (questionEl.value || '').trim();
+
+  sendBtn.disabled = true;
+  if (floatBtn) floatBtn.disabled = true;
+  sendBtn.textContent = 'Thinking…';
   clearHighlight();
+  document.getElementById('guidely-status').textContent = '';
 
   const domMap = buildDomMap();
 
@@ -248,8 +320,6 @@ async function onHelpClick() {
     if (!response || !response.screenshot) throw new Error('No screenshot returned');
     screenshot = response.screenshot;
   } catch (err) {
-    // captureVisibleTab fails on chrome://, PDF viewer, etc.; also fails if the
-    // extension lacks host permission for the page (fixed by <all_urls> in manifest).
     const detail = err && err.message ? err.message : '';
     const isRestricted =
       /chrome:\/\//i.test(window.location.href) ||
@@ -257,50 +327,79 @@ async function onHelpClick() {
     const msg = isRestricted
       ? 'Guidely can\'t run on this built-in browser page. Open a normal website instead.'
       : 'Guidely couldn\'t capture a screenshot of this page. Try reloading the tab, or reload the extension in chrome://extensions if you just updated it.';
-    showSidebar(msg, '', detail ? `Details: ${detail}` : '');
-    btn.disabled = false;
-    btn.textContent = '💡 Help me';
+    setInstruction(msg);
+    document.getElementById('guidely-status').textContent = detail ? `Details: ${detail}` : '';
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Ask Guidely';
+    if (floatBtn) floatBtn.disabled = false;
+    showSidebarOpen();
     return;
   }
+
+  const userLine = question || 'What should I do on this page?';
 
   let data;
   try {
     const res = await fetch('http://localhost:8000/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ screenshot, dom_map: domMap, history: guidely_history }),
+      body: JSON.stringify({
+        screenshot,
+        dom_map: domMap,
+        history: guidely_history,
+        question: question || null,
+      }),
     });
     if (res.status === 503) {
-      showSidebar('Guidely is offline. Please make sure Ollama is running.');
-      btn.disabled = false;
-      btn.textContent = '💡 Help me';
+      setInstruction('Guidely is offline. Please make sure Ollama is running.');
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Ask Guidely';
+      if (floatBtn) floatBtn.disabled = false;
       return;
     }
     data = await res.json();
   } catch {
-    showSidebar('Could not connect to Guidely. Please start the backend.');
-    btn.disabled = false;
-    btn.textContent = '💡 Help me';
+    setInstruction('Could not connect to Guidely. Please start the backend.');
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Ask Guidely';
+    if (floatBtn) floatBtn.disabled = false;
     return;
   }
 
-  showSidebar(data.instruction, data.model_used || '');
+  setInstruction(data.instruction);
+  document.getElementById('guidely-model-badge').textContent = data.model_used ? `Model: ${data.model_used}` : '';
   highlightElement(data.selector);
 
-  // Keep last 5 turns of history
+  guidely_history.push({ role: 'user', content: userLine });
   guidely_history.push({ role: 'assistant', content: data.instruction });
-  if (guidely_history.length > 5) guidely_history.shift();
+  while (guidely_history.length > MAX_HISTORY) {
+    guidely_history.splice(0, guidely_history.length - MAX_HISTORY);
+  }
 
-  btn.disabled = false;
-  btn.textContent = '💡 Help me';
+  questionEl.value = '';
+  sendBtn.disabled = false;
+  sendBtn.textContent = 'Ask Guidely';
+  if (floatBtn) floatBtn.disabled = false;
+  showSidebarOpen();
 }
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
+// ─── Floating button ──────────────────────────────────────────────────────────
+
+function getOrCreateButton() {
+  let btn = document.getElementById('guidely-btn');
+  if (btn) return btn;
+  btn = document.createElement('button');
+  btn.id = 'guidely-btn';
+  btn.type = 'button';
+  btn.textContent = '💡 Help me';
+  document.body.appendChild(btn);
+  return btn;
+}
 
 function init() {
   injectStyles();
   const btn = getOrCreateButton();
-  btn.addEventListener('click', onHelpClick);
+  btn.addEventListener('click', openAskPanel);
 }
 
 if (document.readyState === 'loading') {

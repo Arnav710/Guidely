@@ -49,7 +49,7 @@ uvicorn main:app --port 8000
 
 ### 4. Use it
 
-Navigate to any webpage and click the orange **💡 Help me** button.
+Navigate to any webpage and click the orange **💡 Help me** button. A side panel opens: type a **specific question** about the page (or leave the box empty for a suggested next step), then click **Ask Guidely**. Follow-up questions reuse the last few exchanges as context. **⌘ Enter** (Mac) or **Ctrl+Enter** (Windows/Linux) submits from the text box.
 
 ---
 
@@ -72,7 +72,7 @@ curl http://localhost:8000/models
 # Switch active model
 curl -X POST http://localhost:8000/models/active \
   -H "Content-Type: application/json" \
-  -d '{"model": "gemma4:27b"}'
+  -d '{"model": "gemma4:e2b"}'
 ```
 
 ### Via the analyze endpoint (per-request override)
@@ -84,7 +84,8 @@ curl -X POST http://localhost:8000/analyze \
     "screenshot": "<base64_png>",
     "dom_map": [...],
     "history": [],
-    "model": "gemma4:12b"
+    "model": "gemma4:e2b",
+    "question": "Where do I sign in?"
   }'
 ```
 
@@ -124,8 +125,8 @@ gemma4:31b  →  gemma4:26b  →  gemma4:e4b  →  gemma4:e2b  →  gemma4:2b  �
 |--------|------|-------------|
 | `GET` | `/health` | Backend liveness check |
 | `GET` | `/models` | List installed Ollama models + active model |
-| `POST` | `/models/active` | Switch the active model `{"model": "gemma4:27b"}` |
-| `POST` | `/analyze` | Main inference endpoint |
+| `POST` | `/models/active` | Switch the active model `{"model": "gemma4:26b"}` |
+| `POST` | `/analyze` | Main inference; optional `question` (string, max 2000 chars) |
 
 ---
 

@@ -37,3 +37,22 @@ def test_user_turn_caps_dom_map_at_30():
     turn = build_user_turn(elements, history=[])
     assert "#f29" in turn
     assert "#f30" not in turn
+
+
+def test_user_turn_includes_question():
+    elements = [
+        DomElement(id=1, tag="input", type="text", label="Email", selector="#email", visible=True),
+    ]
+    turn = build_user_turn(elements, history=[], question="Where do I sign in?")
+    assert "Where do I sign in" in turn
+    assert "Answer using the screenshot" in turn
+    assert "#email" in turn
+
+
+def test_user_turn_blank_question_uses_next_step_prompt():
+    elements = [
+        DomElement(id=1, tag="button", type="submit", label="Go", selector="button.go", visible=True),
+    ]
+    turn = build_user_turn(elements, history=[], question="   ")
+    assert "did not type a specific question" in turn
+    assert "button.go" in turn

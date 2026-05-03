@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 
@@ -21,6 +21,11 @@ class AnalyzeRequest(BaseModel):
     dom_map: list[DomElement]
     history: list[HistoryEntry] = []
     model: Optional[str] = None  # override active model per-request
+    question: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Optional user question about this page; answered using screenshot + DOM map.",
+    )
 
 
 class AnalyzeResponse(BaseModel):
