@@ -2,6 +2,9 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from main import app
 
+# Meets MIN_SCREENSHOT_B64_CHARS for /analyze validation (bytes not decoded server-side).
+FAKE_SCREENSHOT_B64 = "A" * 80
+
 
 @pytest.mark.asyncio
 async def test_health_returns_ok():
@@ -26,10 +29,10 @@ async def test_analyze_returns_instruction_and_selector():
         "selector": "button.next-step",
         "_model": "gemma4:e2b",
     }
-    with patch("main.call_ollama", new_callable=AsyncMock, return_value=mock_result):
+    with patch("main.analyze_guidely", new_callable=AsyncMock, return_value=mock_result):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/analyze", json={
-                "screenshot": "aGVsbG8=",
+                "screenshot": FAKE_SCREENSHOT_B64,
                 "dom_map": [
                     {"id": 1, "tag": "button", "type": "submit", "label": "Next",
                      "selector": "button.next-step", "visible": True}
@@ -52,10 +55,10 @@ async def test_analyze_passes_question_to_ollama():
         "_model": "gemma4:e2b",
     }
     mock_ollama = AsyncMock(return_value=mock_result)
-    with patch("main.call_ollama", mock_ollama):
+    with patch("main.analyze_guidely", mock_ollama):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/analyze", json={
-                "screenshot": "aGVsbG8=",
+                "screenshot": FAKE_SCREENSHOT_B64,
                 "dom_map": [
                     {"id": 1, "tag": "a", "type": None, "label": "Settings",
                      "selector": "a.settings", "visible": True}
@@ -77,12 +80,12 @@ async def test_analyze_trace_query_passes_through():
         "_model": "gemma4:e2b",
         "_trace": {"model": "gemma4:e2b", "ollama_elapsed_ms": 12.3},
     }
-    with patch("main.call_ollama", new_callable=AsyncMock, return_value=mock_result):
+    with patch("main.analyze_guidely", new_callable=AsyncMock, return_value=mock_result):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/analyze?trace=1",
                 json={
-                    "screenshot": "aGVsbG8=",
+                    "screenshot": FAKE_SCREENSHOT_B64,
                     "dom_map": [],
                     "history": [],
                 },
@@ -94,12 +97,24 @@ async def test_analyze_trace_query_passes_through():
 
 
 @pytest.mark.asyncio
+async def test_analyze_rejects_tiny_screenshot():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/analyze", json={
+            "screenshot": "abc",
+            "dom_map": [],
+            "history": [],
+        })
+    assert response.status_code == 400
+    assert "screenshot" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
 async def test_analyze_returns_503_when_ollama_unavailable():
     from ollama_client import OllamaUnavailableError
-    with patch("main.call_ollama", new_callable=AsyncMock, side_effect=OllamaUnavailableError("not running")):
+    with patch("main.analyze_guidely", new_callable=AsyncMock, side_effect=OllamaUnavailableError("not running")):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/analyze", json={
-                "screenshot": "aGVsbG8=",
+                "screenshot": FAKE_SCREENSHOT_B64,
                 "dom_map": [],
                 "history": [],
             })

@@ -20,14 +20,16 @@ A Chrome extension that helps elderly users navigate any website by capturing a 
 ### 1. Pull the model
 
 ```bash
-# Recommended: multimodal 5B model (already installed by default)
-ollama pull gemma4:e2b
+# Default target: multimodal ~9B (Guidely prefers this over 2B when installed)
+ollama pull gemma4:e4b
 
-# Optional higher-quality variants (larger download):
-ollama pull gemma4:e4b    # ~9 GB — solid mid-tier
-ollama pull gemma4:26b    # ~18 GB — best quality, 26B MoE (recommended)
-ollama pull gemma4:31b    # ~20 GB — densest, highest quality
+# Smaller / larger options:
+ollama pull gemma4:e2b    # ~7 GB — faster, less capable
+ollama pull gemma4:26b    # ~18 GB — 26B MoE
+ollama pull gemma4:31b    # ~20 GB — dense 31B
 ```
+
+The backend auto-picks the best **installed** Gemma 4 tag (order: 31b → 26b → **e4b** → e2b → …).
 
 ### 2. Start the backend
 
@@ -49,7 +51,13 @@ uvicorn main:app --port 8000
 
 ### 4. Use it
 
-Navigate to any webpage and click the orange **💡 Help me** button. A side panel opens: type a **specific question** about the page (or leave the box empty for a suggested next step), then click **Ask Guidely**. Follow-up questions reuse the last few exchanges as context. **⌘ Enter** (Mac) or **Ctrl+Enter** (Windows/Linux) submits from the text box.
+Navigate to any webpage and click the orange **💡 Help me** button. A side panel opens: type a **specific question** about the page (or leave the box empty for a suggested next step), then click **Ask Guidely**. **Each click** captures a **fresh screenshot** of the visible tab and sends it to your local backend (with the DOM map) — that is the default; there is no “text-only” path.
+
+If the backend or Ollama returns an error, the **same panel** shows the error message (not a generic one-liner). **⌘ Enter** (Mac) or **Ctrl+Enter** (Windows/Linux) submits from the text box.
+
+### Web tools (optional)
+
+The repo has a top-level `tools/` package. The model can request **`web_search`** (DuckDuckGo text results via `duckduckgo-search`); the server runs the tool and **calls Ollama a second time** with the snippets. Set `"enable_tools": false` on `POST /analyze` to disable. All answers still go through Ollama — the server does not improvise replies without the model.
 
 ---
 
@@ -117,7 +125,7 @@ source .venv/bin/activate
 pytest tests/ -v
 ```
 
-Expected: **16 passed**.
+Expected: **23 passed** (run from `backend/`).
 
 ---
 
@@ -126,7 +134,8 @@ Expected: **16 passed**.
 ```
 Chrome Extension (content.js + background.js)
   → POST /analyze (FastAPI, localhost:8000)
-    → Ollama (<active_model>, localhost:11434)
+    → Ollama (/api/generate, <active_model>, localhost:11434)
+    → optional: tools/web_search.py → second Ollama round if model requested web_search
 ```
 
 ### Model auto-detection
@@ -144,7 +153,7 @@ gemma4:31b  →  gemma4:26b  →  gemma4:e4b  →  gemma4:e2b  →  gemma4:2b  �
 | `GET` | `/health` | Backend liveness check |
 | `GET` | `/models` | List installed Ollama models + active model |
 | `POST` | `/models/active` | Switch the active model `{"model": "gemma4:26b"}` |
-| `POST` | `/analyze` | Main inference; optional `question` (string, max 2000 chars) |
+| `POST` | `/analyze` | Vision + DOM + optional `question`; `enable_tools` (default true) |
 
 ---
 
@@ -152,6 +161,8 @@ gemma4:31b  →  gemma4:26b  →  gemma4:e4b  →  gemma4:e2b  →  gemma4:2b  �
 
 ```
 guidely/
+├── tools/
+│   ├── web_search.py    # DuckDuckGo text search (invoked by backend, not the browser)
 ├── extension/
 │   ├── manifest.json      # MV3 manifest
 │   ├── background.js      # Screenshot capture service worker

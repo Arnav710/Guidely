@@ -354,18 +354,41 @@ async function submitGuidelyQuestion() {
         dom_map: domMap,
         history: guidely_history,
         question: question || null,
+        enable_tools: true,
       }),
     });
-    if (res.status === 503) {
-      setInstruction('Guidely is offline. Please make sure Ollama is running.');
+
+    let payload;
+    try {
+      payload = await res.json();
+    } catch {
+      setInstruction(`Guidely returned a non-JSON response (HTTP ${res.status}). Check that the backend is Guidely on port 8000.`);
       sendBtn.disabled = false;
       sendBtn.textContent = 'Ask Guidely';
       if (floatBtn) floatBtn.disabled = false;
       return;
     }
-    data = await res.json();
+
+    if (!res.ok) {
+      const d = payload.detail;
+      let msg;
+      if (Array.isArray(d)) {
+        msg = d.map((x) => (x.msg ? `${x.loc?.join?.('.') || ''}: ${x.msg}` : JSON.stringify(x))).join(' ');
+      } else if (typeof d === 'string') {
+        msg = d;
+      } else {
+        msg = JSON.stringify(payload);
+      }
+      setInstruction(msg || `Request failed (HTTP ${res.status}).`);
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Ask Guidely';
+      if (floatBtn) floatBtn.disabled = false;
+      return;
+    }
+
+    data = payload;
   } catch {
-    setInstruction('Could not connect to Guidely. Please start the backend.');
+    setInstruction('Could not connect to Guidely. Is the backend running on http://localhost:8000?');
     sendBtn.disabled = false;
     sendBtn.textContent = 'Ask Guidely';
     if (floatBtn) floatBtn.disabled = false;

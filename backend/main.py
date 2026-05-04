@@ -9,12 +9,14 @@ from models import (
     SetModelRequest,
 )
 from ollama_client import (
-    call_ollama,
+    analyze_guidely,
     list_ollama_models,
     get_active_model,
     set_active_model,
     OllamaUnavailableError,
 )
+
+MIN_SCREENSHOT_B64_CHARS = 80
 
 logger = logging.getLogger(__name__)
 
@@ -75,14 +77,20 @@ async def analyze(
     request: AnalyzeRequest,
     trace: bool = Query(False, description="If true, include non-sensitive debug stats in the response."),
 ):
+    if len((request.screenshot or "").strip()) < MIN_SCREENSHOT_B64_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail="Screenshot data is missing or too small. The extension must capture the visible tab before sending.",
+        )
     try:
-        result = await call_ollama(
+        result = await analyze_guidely(
             screenshot_b64=request.screenshot,
             elements=request.dom_map,
             history=request.history,
             model=request.model,
             question=request.question,
             trace=trace,
+            enable_tools=request.enable_tools,
         )
     except OllamaUnavailableError as exc:
         logger.warning("Ollama call failed: %s", str(exc)[:500])

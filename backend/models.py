@@ -26,6 +26,10 @@ class AnalyzeRequest(BaseModel):
         max_length=2000,
         description="Optional user question about this page; answered using screenshot + DOM map.",
     )
+    enable_tools: bool = Field(
+        True,
+        description="If true, model may request web_search; backend runs tools and calls Ollama again.",
+    )
 
 
 class AnalyzeResponse(BaseModel):

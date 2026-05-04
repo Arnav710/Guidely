@@ -8,21 +8,33 @@ Model-switching design:
   - `call_ollama()` accepts an optional `model` override per-request.
 """
 
+import sys
 import re
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Optional, Any
 import httpx
+
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 from models import DomElement, HistoryEntry
-from prompt import build_system_prompt, build_user_turn
+from prompt import (
+    build_system_prompt,
+    build_user_turn,
+    SYSTEM_PROMPT_AFTER_TOOLS,
+    SYSTEM_PROMPT_WITH_TOOLS,
+)
 
 OLLAMA_BASE = "http://localhost:11434"
 OLLAMA_GENERATE_URL = f"{OLLAMA_BASE}/api/generate"
 OLLAMA_TAGS_URL = f"{OLLAMA_BASE}/api/tags"
 
 # Fallback preference order — first match wins if multiple are installed
-# Tag reference: e2b=5.1B, e4b=~9B, 26b=26B MoE (4B active), 31b=31B dense
+# Tag reference: e2b=~5B vision, e4b=~9B vision (default), 26b/31b larger
 _MODEL_PREFERENCE = [
     "gemma4:31b",
     "gemma4:26b",
@@ -32,7 +44,7 @@ _MODEL_PREFERENCE = [
     "gemma4",
 ]
 
-_active_model: str = "gemma4:e2b"  # overwritten at first real call if needed
+_active_model: str = "gemma4:e4b"  # prefer 4B-class multimodal; overwritten after detection if missing
 _model_detected: bool = False
 
 logger = logging.getLogger(__name__)
@@ -111,6 +123,8 @@ async def call_ollama(
     question: Optional[str] = None,
     trace: bool = False,
     retry: bool = True,
+    system_prompt: Optional[str] = None,
+    extra_user_context: Optional[str] = None,
 ) -> dict:
     global _active_model, _model_detected
 
@@ -121,8 +135,13 @@ async def call_ollama(
 
     chosen_model = model or _active_model
 
-    system = build_system_prompt()
-    user_text = build_user_turn(elements, history, question=question)
+    system = system_prompt if system_prompt is not None else build_system_prompt()
+    user_text = build_user_turn(
+        elements,
+        history,
+        question=question,
+        extra_context=extra_user_context,
+    )
 
     trace_info: dict[str, Any] = {
         "model": chosen_model,
@@ -215,3 +234,98 @@ async def call_ollama(
             {"instruction": raw.strip(), "element_label": None, "selector": None},
             False,
         )
+
+
+async def analyze_guidely(
+    screenshot_b64: str,
+    elements: list[DomElement],
+    history: list[HistoryEntry],
+    model: Optional[str] = None,
+    question: Optional[str] = None,
+    trace: bool = False,
+    enable_tools: bool = True,
+) -> dict:
+    """
+    Run vision LLM; optionally allow one round of web_search tools before final JSON answer.
+    All inference goes through Ollama's /api/generate — nothing is answered without the model.
+    """
+    from tools.web_search import web_search
+
+    if not enable_tools:
+        out = await call_ollama(
+            screenshot_b64,
+            elements,
+            history,
+            model=model,
+            question=question,
+            trace=trace,
+        )
+        out.pop("tool_requests", None)
+        return out
+
+    r1 = await call_ollama(
+        screenshot_b64,
+        elements,
+        history,
+        model=model,
+        question=question,
+        trace=trace,
+        system_prompt=SYSTEM_PROMPT_WITH_TOOLS,
+    )
+
+    reqs = r1.get("tool_requests")
+    if not isinstance(reqs, list) or not reqs:
+        r1.pop("tool_requests", None)
+        return r1
+
+    queries: list[str] = []
+    for item in reqs[:2]:
+        if not isinstance(item, dict):
+            continue
+        if item.get("tool") != "web_search":
+            continue
+        q = item.get("query")
+        if isinstance(q, str) and q.strip():
+            queries.append(q.strip()[:500])
+    if not queries:
+        r1.pop("tool_requests", None)
+        return r1
+
+    parts: list[str] = []
+    for q in queries:
+        try:
+            text = await web_search(q)
+            parts.append(f"Query: {q}\n{text}")
+        except Exception as exc:
+            parts.append(f"Query: {q}\n(Error: {str(exc)[:400]})")
+
+    blob = "\n\n---\n\n".join(parts)
+    extra = (
+        "---\nWeb search results (verify against the page; use plain language):\n"
+        f"{blob}\n---\nAnswer the user completely. Do not request more tools. JSON only."
+    )
+
+    r2 = await call_ollama(
+        screenshot_b64,
+        elements,
+        history,
+        model=model,
+        question=question,
+        trace=trace,
+        system_prompt=SYSTEM_PROMPT_AFTER_TOOLS,
+        extra_user_context=extra,
+    )
+
+    r2.pop("tool_requests", None)
+
+    if trace:
+        t2 = dict(r2.get("_trace") or {})
+        t1 = r1.get("_trace") or {}
+        if t1:
+            t2["analyze_round_1_ms"] = t1.get("ollama_elapsed_ms")
+            t2["analyze_round_1_response_chars"] = t1.get("ollama_response_chars")
+        t2["web_search_queries"] = queries
+        t2["web_search_used"] = True
+        r2["_trace"] = t2
+
+    return r2

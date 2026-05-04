@@ -49,6 +49,15 @@ def test_user_turn_includes_question():
     assert "#email" in turn
 
 
+def test_user_turn_extra_context_appended():
+    elements = [
+        DomElement(id=1, tag="button", type="submit", label="Go", selector="button.go", visible=True),
+    ]
+    turn = build_user_turn(elements, history=[], question=None, extra_context="WEB BITS HERE")
+    assert "WEB BITS HERE" in turn
+    assert "button.go" in turn
+
+
 def test_user_turn_blank_question_uses_next_step_prompt():
     elements = [
         DomElement(id=1, tag="button", type="submit", label="Go", selector="button.go", visible=True),
