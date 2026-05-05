@@ -6,8 +6,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ error: chrome.runtime.lastError.message });
       return;
     }
-    // Strip the data URL prefix to get raw base64
+    if (typeof dataUrl !== 'string' || !dataUrl.includes(',')) {
+      sendResponse({ error: 'Invalid capture data URL' });
+      return;
+    }
     const base64 = dataUrl.split(',')[1];
+    if (typeof base64 !== 'string' || !base64.length) {
+      sendResponse({ error: 'Empty capture payload' });
+      return;
+    }
     sendResponse({ screenshot: base64 });
   });
 

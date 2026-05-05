@@ -109,6 +109,31 @@ async def test_analyze_rejects_tiny_screenshot():
 
 
 @pytest.mark.asyncio
+async def test_analyze_accepts_dom_only_without_screenshot():
+    mock_result = {
+        "instruction": "Click the blue Sign in link.",
+        "element_label": "Sign in",
+        "selector": "a.signin",
+        "needs_screenshot": False,
+        "_model": "gemma4:e2b",
+    }
+    with patch("main.analyze_guidely", new_callable=AsyncMock, return_value=mock_result):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/analyze", json={
+                "dom_map": [
+                    {"id": 1, "tag": "a", "type": None, "label": "Sign in",
+                     "selector": "a.signin", "visible": True}
+                ],
+                "history": [],
+            })
+    assert response.status_code == 200
+    data = response.json()
+    assert data["needs_screenshot"] is False
+    assert data["instruction"] == "Click the blue Sign in link."
+    assert data["selector"] == "a.signin"
+
+
+@pytest.mark.asyncio
 async def test_analyze_returns_503_when_ollama_unavailable():
     from ollama_client import OllamaUnavailableError
     with patch("main.analyze_guidely", new_callable=AsyncMock, side_effect=OllamaUnavailableError("not running")):

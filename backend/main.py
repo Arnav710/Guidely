@@ -14,9 +14,8 @@ from ollama_client import (
     get_active_model,
     set_active_model,
     OllamaUnavailableError,
+    MIN_SCREENSHOT_B64_CHARS,
 )
-
-MIN_SCREENSHOT_B64_CHARS = 80
 
 logger = logging.getLogger(__name__)
 
@@ -77,28 +76,37 @@ async def analyze(
     request: AnalyzeRequest,
     trace: bool = Query(False, description="If true, include non-sensitive debug stats in the response."),
 ):
-    if len((request.screenshot or "").strip()) < MIN_SCREENSHOT_B64_CHARS:
+    s = (request.screenshot or "").strip()
+    if s and len(s) < MIN_SCREENSHOT_B64_CHARS:
         raise HTTPException(
             status_code=400,
-            detail="Screenshot data is missing or too small. The extension must capture the visible tab before sending.",
+            detail="Screenshot is too small. Omit screenshot for a DOM-only pass, or send a full tab capture.",
         )
+    screenshot_b64 = s if len(s) >= MIN_SCREENSHOT_B64_CHARS else None
+
     try:
         result = await analyze_guidely(
-            screenshot_b64=request.screenshot,
-            elements=request.dom_map,
-            history=request.history,
+            request.dom_map,
+            request.history,
+            screenshot_b64=screenshot_b64,
             model=request.model,
             question=request.question,
             trace=trace,
             enable_tools=request.enable_tools,
+            page_url=request.page_url,
+            page_title=request.page_title,
         )
     except OllamaUnavailableError as exc:
         logger.warning("Ollama call failed: %s", str(exc)[:500])
         raise HTTPException(status_code=503, detail=str(exc))
 
-    instr = result.get("instruction")
-    if instr is None or (isinstance(instr, str) and not str(instr).strip()):
-        instr = "I couldn't figure out the next step. Try clicking 'Help me' again."
+    needs_shot = bool(result.get("needs_screenshot"))
+    if not needs_shot:
+        instr = result.get("instruction")
+        if instr is None or (isinstance(instr, str) and not str(instr).strip()):
+            instr = "I couldn't figure out the next step. Try clicking 'Help me' again."
+    else:
+        instr = (result.get("instruction") or "").strip() or "Taking a closer look at the page…"
 
     trace_payload = result.get("_trace") if trace else None
 
@@ -118,5 +126,6 @@ async def analyze(
         element_label=result.get("element_label"),
         selector=result.get("selector"),
         model_used=result.get("_model"),
+        needs_screenshot=needs_shot,
         trace=trace_payload,
     )

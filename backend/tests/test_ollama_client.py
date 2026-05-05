@@ -46,7 +46,7 @@ async def test_call_ollama_returns_parsed_response():
             mock_client.post.return_value = mock_response
 
             elements = [DomElement(id=1, tag="button", type="submit", label="Next", selector="button.next", visible=True)]
-            result = await call_ollama(screenshot_b64="abc123", elements=elements, history=[])
+            result = await call_ollama(elements, [], screenshot_b64="abc123")
 
     assert result["instruction"] == "Click Next"
     assert result["selector"] == "button.next"
@@ -66,7 +66,7 @@ async def test_call_ollama_raises_when_body_contains_error_field():
 
             elements = [DomElement(id=1, tag="button", type="submit", label="Next", selector="button.next", visible=True)]
             with pytest.raises(OllamaUnavailableError, match="model runner"):
-                await call_ollama(screenshot_b64="abc", elements=elements, history=[])
+                await call_ollama(elements, [], screenshot_b64="abc")
 
 
 @pytest.mark.asyncio
@@ -80,4 +80,4 @@ async def test_call_ollama_raises_on_connection_error():
 
             elements = [DomElement(id=1, tag="button", type="submit", label="Next", selector="button.next", visible=True)]
             with pytest.raises(OllamaUnavailableError):
-                await call_ollama(screenshot_b64="abc123", elements=elements, history=[])
+                await call_ollama(elements, [], screenshot_b64="abc123")

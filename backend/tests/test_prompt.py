@@ -49,6 +49,18 @@ def test_user_turn_includes_question():
     assert "#email" in turn
 
 
+def test_user_turn_dom_only_mentions_no_screenshot_yet():
+    elements = [
+        DomElement(id=1, tag="input", type="text", label="Email", selector="#email", visible=True),
+    ]
+    turn = build_user_turn(
+        elements, history=[], question="Where do I sign in?", has_vision=False
+    )
+    assert "Where do I sign in" in turn
+    assert "screenshot yet" in turn.lower()
+    assert "#email" in turn
+
+
 def test_user_turn_extra_context_appended():
     elements = [
         DomElement(id=1, tag="button", type="submit", label="Go", selector="button.go", visible=True),

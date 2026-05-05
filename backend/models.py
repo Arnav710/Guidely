@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, Any
 
 
 class DomElement(BaseModel):
@@ -17,7 +17,10 @@ class HistoryEntry(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
-    screenshot: str        # base64-encoded PNG
+    screenshot: Optional[str] = Field(
+        None,
+        description="Base64 PNG of the visible tab. Omit or null for a DOM-only pass.",
+    )
     dom_map: list[DomElement]
     history: list[HistoryEntry] = []
     model: Optional[str] = None  # override active model per-request
@@ -30,6 +33,26 @@ class AnalyzeRequest(BaseModel):
         True,
         description="If true, model may request web_search; backend runs tools and calls Ollama again.",
     )
+    page_url: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Full URL of the page the user is viewing.",
+    )
+    page_title: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="document.title of the page the user is viewing.",
+    )
+
+    @field_validator("screenshot", mode="before")
+    @classmethod
+    def screenshot_str_or_none(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        # Mistyped JSON would otherwise raise "Input should be a valid string"; treat as no image.
+        return None
 
 
 class AnalyzeResponse(BaseModel):
@@ -37,6 +60,10 @@ class AnalyzeResponse(BaseModel):
     element_label: Optional[str] = None
     selector: Optional[str] = None
     model_used: Optional[str] = None
+    needs_screenshot: bool = Field(
+        False,
+        description="True when the DOM-only pass needs a screenshot; client should POST again with screenshot.",
+    )
     # Present only when POST /analyze?trace=1 — confirms payload sizes and Ollama timing (no raw prompts/images).
     trace: Optional[dict] = None
 

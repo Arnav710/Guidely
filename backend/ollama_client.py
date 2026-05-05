@@ -5,7 +5,8 @@ Model-switching design:
   - A module-level `_active_model` variable holds the current model name.
   - On startup it auto-detects the best available Gemma 4 model from Ollama.
   - `set_active_model()` / `get_active_model()` provide thread-safe get/set.
-  - `call_ollama()` accepts an optional `model` override per-request.
+  - `call_ollama(elements, history, screenshot_b64=...)` — image optional; omit for DOM-only text passes.
+  - Per-request `model` override is supported.
 """
 
 import sys
@@ -26,8 +27,12 @@ from prompt import (
     build_system_prompt,
     build_user_turn,
     SYSTEM_PROMPT_AFTER_TOOLS,
+    SYSTEM_PROMPT_AFTER_TOOLS_DOM_FIRST,
     SYSTEM_PROMPT_WITH_TOOLS,
+    SYSTEM_PROMPT_WITH_TOOLS_DOM_FIRST,
 )
+
+MIN_SCREENSHOT_B64_CHARS = 80
 
 OLLAMA_BASE = "http://localhost:11434"
 OLLAMA_GENERATE_URL = f"{OLLAMA_BASE}/api/generate"
@@ -107,6 +112,11 @@ def set_active_model(model: str) -> None:
     _model_detected = True
 
 
+def screenshot_usable(screenshot_b64: Optional[str]) -> bool:
+    s = (screenshot_b64 or "").strip()
+    return len(s) >= MIN_SCREENSHOT_B64_CHARS
+
+
 def extract_json(raw: str) -> dict:
     """Extract the first JSON object from a raw string, ignoring surrounding prose."""
     match = re.search(r"\{[\s\S]*\}", raw)
@@ -116,15 +126,17 @@ def extract_json(raw: str) -> dict:
 
 
 async def call_ollama(
-    screenshot_b64: str,
     elements: list[DomElement],
     history: list[HistoryEntry],
+    screenshot_b64: Optional[str] = None,
     model: Optional[str] = None,
     question: Optional[str] = None,
     trace: bool = False,
     retry: bool = True,
     system_prompt: Optional[str] = None,
     extra_user_context: Optional[str] = None,
+    page_url: Optional[str] = None,
+    page_title: Optional[str] = None,
 ) -> dict:
     global _active_model, _model_detected
 
@@ -135,32 +147,38 @@ async def call_ollama(
 
     chosen_model = model or _active_model
 
-    system = system_prompt if system_prompt is not None else build_system_prompt()
+    has_vision = screenshot_usable(screenshot_b64)
+    system = system_prompt if system_prompt is not None else build_system_prompt(has_vision=has_vision)
     user_text = build_user_turn(
         elements,
         history,
         question=question,
         extra_context=extra_user_context,
+        has_vision=has_vision,
+        page_url=page_url,
+        page_title=page_title,
     )
 
     trace_info: dict[str, Any] = {
         "model": chosen_model,
         "dom_element_count": len(elements),
         "history_entries": len(history),
-        "image_base64_chars": len(screenshot_b64 or ""),
+        "image_base64_chars": len((screenshot_b64 or "").strip()) if has_vision else 0,
         "user_prompt_chars": len(user_text),
         "system_prompt_chars": len(system),
         "question_provided": bool((question or "").strip()),
+        "vision_image_attached": has_vision,
     }
 
-    payload = {
+    payload: dict[str, Any] = {
         "model": chosen_model,
         "system": system,
         "prompt": user_text,
-        "images": [screenshot_b64],
         "stream": False,
         "format": "json",
     }
+    if has_vision:
+        payload["images"] = [screenshot_b64]
 
     async def _do_post(client: httpx.AsyncClient) -> tuple[dict, float]:
         t0 = time.monotonic()
@@ -201,7 +219,7 @@ async def call_ollama(
             len(raw),
             parsed_ok,
             len(elements),
-            len(screenshot_b64 or ""),
+            len((screenshot_b64 or "").strip()) if has_vision else 0,
         )
         return result
 
@@ -230,53 +248,82 @@ async def call_ollama(
                 logger.warning("Ollama retry HTTP failed: %s", exc)
             except OllamaUnavailableError:
                 raise
-        return _finish(
-            {"instruction": raw.strip(), "element_label": None, "selector": None},
-            False,
-        )
+        fb: dict[str, Any] = {"instruction": raw.strip(), "element_label": None, "selector": None}
+        if not has_vision:
+            fb["needs_screenshot"] = False
+        return _finish(fb, False)
+
+
+def _normalize_analyze_out(out: dict, has_vision: bool) -> dict:
+    o = dict(out)
+    o.pop("tool_requests", None)
+    if has_vision:
+        o.pop("needs_screenshot", None)
+        o["needs_screenshot"] = False
+    else:
+        o["needs_screenshot"] = bool(o.get("needs_screenshot"))
+    return o
 
 
 async def analyze_guidely(
-    screenshot_b64: str,
     elements: list[DomElement],
     history: list[HistoryEntry],
+    screenshot_b64: Optional[str] = None,
     model: Optional[str] = None,
     question: Optional[str] = None,
     trace: bool = False,
     enable_tools: bool = True,
+    page_url: Optional[str] = None,
+    page_title: Optional[str] = None,
 ) -> dict:
     """
-    Run vision LLM; optionally allow one round of web_search tools before final JSON answer.
-    All inference goes through Ollama's /api/generate — nothing is answered without the model.
+    Run Gemma via Ollama. With a usable screenshot, attach vision; without it, DOM-only pass
+    may set needs_screenshot for a follow-up request from the extension.
+    Optionally allow one round of web_search before the final JSON answer.
     """
     from tools.web_search import web_search
 
+    has_image = screenshot_usable(screenshot_b64)
+    img_arg = screenshot_b64 if has_image else None
+
     if not enable_tools:
         out = await call_ollama(
-            screenshot_b64,
             elements,
             history,
+            screenshot_b64=img_arg,
             model=model,
             question=question,
             trace=trace,
+            system_prompt=build_system_prompt(has_vision=has_image),
+            page_url=page_url,
+            page_title=page_title,
         )
-        out.pop("tool_requests", None)
-        return out
+        return _normalize_analyze_out(out, has_image)
 
+    sys_first = SYSTEM_PROMPT_WITH_TOOLS if has_image else SYSTEM_PROMPT_WITH_TOOLS_DOM_FIRST
     r1 = await call_ollama(
-        screenshot_b64,
         elements,
         history,
+        screenshot_b64=img_arg,
         model=model,
         question=question,
         trace=trace,
-        system_prompt=SYSTEM_PROMPT_WITH_TOOLS,
+        system_prompt=sys_first,
+        page_url=page_url,
+        page_title=page_title,
     )
 
-    reqs = r1.get("tool_requests")
-    if not isinstance(reqs, list) or not reqs:
+    reqs_raw = r1.get("tool_requests")
+    reqs = reqs_raw if isinstance(reqs_raw, list) else []
+
+    if not has_image and r1.get("needs_screenshot") and not reqs:
+        return _normalize_analyze_out(r1, False)
+
+    if not reqs:
         r1.pop("tool_requests", None)
-        return r1
+        if not has_image and r1.get("needs_screenshot"):
+            return _normalize_analyze_out(r1, False)
+        return _normalize_analyze_out(r1, has_image)
 
     queries: list[str] = []
     for item in reqs[:2]:
@@ -289,7 +336,9 @@ async def analyze_guidely(
             queries.append(q.strip()[:500])
     if not queries:
         r1.pop("tool_requests", None)
-        return r1
+        if not has_image and r1.get("needs_screenshot"):
+            return _normalize_analyze_out(r1, False)
+        return _normalize_analyze_out(r1, has_image)
 
     parts: list[str] = []
     for q in queries:
@@ -305,18 +354,19 @@ async def analyze_guidely(
         f"{blob}\n---\nAnswer the user completely. Do not request more tools. JSON only."
     )
 
+    sys_after = SYSTEM_PROMPT_AFTER_TOOLS if has_image else SYSTEM_PROMPT_AFTER_TOOLS_DOM_FIRST
     r2 = await call_ollama(
-        screenshot_b64,
         elements,
         history,
+        screenshot_b64=img_arg,
         model=model,
         question=question,
         trace=trace,
-        system_prompt=SYSTEM_PROMPT_AFTER_TOOLS,
+        system_prompt=sys_after,
         extra_user_context=extra,
+        page_url=page_url,
+        page_title=page_title,
     )
-
-    r2.pop("tool_requests", None)
 
     if trace:
         t2 = dict(r2.get("_trace") or {})
@@ -328,4 +378,7 @@ async def analyze_guidely(
         t2["web_search_used"] = True
         r2["_trace"] = t2
 
-    return r2
+    if not has_image and r2.get("needs_screenshot"):
+        return _normalize_analyze_out(r2, False)
+
+    return _normalize_analyze_out(r2, has_image)

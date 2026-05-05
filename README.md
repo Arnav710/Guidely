@@ -51,9 +51,7 @@ uvicorn main:app --port 8000
 
 ### 4. Use it
 
-Navigate to any webpage and click the orange **💡 Help me** button. A side panel opens: type a **specific question** about the page (or leave the box empty for a suggested next step), then click **Ask Guidely**. **Each click** captures a **fresh screenshot** of the visible tab and sends it to your local backend (with the DOM map) — that is the default; there is no “text-only” path.
-
-If the backend or Ollama returns an error, the **same panel** shows the error message (not a generic one-liner). **⌘ Enter** (Mac) or **Ctrl+Enter** (Windows/Linux) submits from the text box.
+Navigate to any webpage and click the orange **💡 Help me** button. A **chat** panel opens: messages scroll like a normal chat. **Each send** first sends the page’s **interactive elements (DOM map)** to the backend; the model may answer from that alone, or ask for a **screenshot**—then the extension captures the tab and sends a second request with the image. **Enter** sends; **Shift+Enter** starts a new line. You can leave the input empty to ask for a suggested next step. Errors appear as chat messages. The toolbar popup still shows backend health and model switching.
 
 ### Web tools (optional)
 
