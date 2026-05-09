@@ -662,6 +662,20 @@ export async function startAgentLoop(conversationId, goal, callbacks = {}) {
   }
 
   await store.attachWorkflow(conversationId, planData.plan);
+
+  // If the planner detected missing required details, surface the clarifying
+  // question immediately — no browsing, no step loop.
+  if (planData.plan.clarification_question) {
+    const question = planData.plan.clarification_question;
+    await store.updateAgentSession(conversationId, {
+      status: 'paused',
+      pendingUserQuestion: question,
+    });
+    callbacks.onMessage?.({ role: 'assistant', content: question });
+    callbacks.onStatusChange?.('paused');
+    return;
+  }
+
   onMessage?.({ role: 'system', content: `Starting with ${planData.plan.steps.length} step${planData.plan.steps.length > 1 ? 's' : ''} — more will be planned as we go.` });
 
   // Start the loop. Pass the page sections we already captured so the LLM

@@ -383,7 +383,7 @@ scroll              {"direction":"down|up|top|bottom"}    Scroll the page
 === CONTROL ===
 complete_step       {"evidence":"..."}                    Current step done — advance
 replan              {"reason":"..."}                      Generate a new plan (after 3+ failures)
-ask_user            {"question":"..."}                    Ask the user (passwords, choices, confirmations only)
+ask_user            {"question":"<your question>"}         Ask the user for missing info or confirmation
 done                {"message":"..."}                     Task fully complete
 
 OUTPUT FORMAT (respond with ONLY this JSON, no other text):
@@ -426,6 +426,7 @@ DECISION RULES (apply in order):
    RULE: Do NOT assume a default date (e.g. "today" or "tomorrow"). Always ask.
    RULE: If the conversation history already contains the answer, do NOT ask again — use it.
    RULE: Combine all missing fields into ONE ask_user call (do not ask one-by-one).
+   RULE: The ask_user params key MUST be "question" — example: {"question": "What dates would you like to travel?"}
 
 1. Need info from another site?       → web_search immediately (no page observation needed first)
 2. Got numbered search results?       → goto_result with the most relevant index
@@ -466,6 +467,25 @@ Goal: "Find my Medicare coverage"
 
 AGENT_PLAN_PROMPT = """You are Guidely's planner. A user needs help completing a task in a web browser.
 
+STEP 1 — CLARIFICATION CHECK (do this before planning):
+Some tasks cannot be executed without specific details. Check the goal against these rules:
+
+  FLIGHTS / TRAINS / BUS: needs departure city, destination city, AND departure date.
+    - If departure date is missing → needs_clarification = true
+    - Question example: "To find flights I need a few details: What dates would you like to travel? Will this be a round trip? And how many passengers?"
+
+  HOTELS: needs destination AND check-in date AND check-out date.
+    - If any date is missing → needs_clarification = true
+
+  RESTAURANTS / APPOINTMENTS: needs date and time.
+    - If missing → needs_clarification = true
+
+  If needs_clarification is true, respond ONLY with:
+  {"needs_clarification": true, "question": "<friendly question asking for ALL missing required details at once>"}
+
+  Do NOT produce any steps when needs_clarification is true.
+
+STEP 2 — PLAN (only when all required details are known):
 Plan ONLY the next 2-3 immediate, concrete steps from where the user currently is.
 You will be asked for more steps once these are done, so do NOT try to plan the complete end-to-end journey now.
 
@@ -477,7 +497,7 @@ IMPORTANT — steps must be high-level actions, NOT low-level browser micro-step
   BAD:  "Click the address bar", "Type the URL", "Press Enter to navigate"
   GOOD: "Go to the Utah DMV online renewal page"
 
-Respond with ONLY valid JSON (no other text):
+When all required details are known, respond with ONLY valid JSON (no other text):
 {
   "goal": "<echo the user goal in one clear sentence>",
   "steps": [

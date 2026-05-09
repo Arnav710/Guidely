@@ -292,6 +292,11 @@ async def run_agent_start(request: AgentStartRequest) -> AgentStartResponse:
     """
     Generate a step-by-step plan for the given goal.
     Uses the active model (text-only; no vision needed for planning).
+
+    If the planner returns {"needs_clarification": true, "question": "..."} the
+    backend synthesises a one-step plan whose single step is ask_user, so the
+    agent loop fires the clarifying question on the very first iteration instead
+    of wandering around booking sites for a dozen steps.
     """
     parts: list[str] = [f"Goal: {request.goal}"]
     if request.page_url:
@@ -309,6 +314,23 @@ async def run_agent_start(request: AgentStartRequest) -> AgentStartResponse:
     except (ValueError, Exception) as exc:
         logger.warning("agent/start plan parse failed: %s | raw=%s", exc, raw[:300])
         raise ValueError("Model returned an unparseable plan. Please try again.")
+
+    # Planner signalled that required details are missing — synthesise a
+    # one-step plan so the loop immediately calls ask_user on iteration 1.
+    if parsed.get("needs_clarification"):
+        question = str(parsed.get("question") or (
+            "Before I start, I need a few details. Could you tell me the "
+            "specific dates and any other information needed for this task?"
+        ))[:500]
+        logger.info("agent/start needs_clarification — injecting ask_user step")
+        return AgentStartResponse(
+            plan={
+                "goal": request.goal[:500],
+                "steps": [{"id": "s1", "description": f"ask_user: {question}"}],
+                # Embed the question so the step loop can surface it directly.
+                "clarification_question": question,
+            }
+        )
 
     steps_raw = parsed.get("steps") or []
     steps = [
