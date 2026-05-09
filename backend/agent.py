@@ -249,13 +249,32 @@ def _build_agent_context(request: AgentStepRequest) -> str:
             lines.append(f"  {prefix}: {content}")
         lines.append("")
 
-    # Rolling tool history (last 2 calls, each compressed to one line)
+    # Rolling tool history (last 3 calls, each compressed to one line)
     if request.last_tool_calls:
         lines.append("Recent actions:")
-        for tc in request.last_tool_calls[-2:]:
+        for tc in request.last_tool_calls[-3:]:
             result_str = _compress_result(tc.result)
             lines.append(f"  {tc.tool}({_compact_params(tc.params)}) → {result_str}")
         lines.append("")
+
+        # Detect when the model is spinning on the same observation tool with the
+        # same arguments — warn it explicitly so it stops repeating and acts.
+        _OBS_TOOLS = {"get_page_text", "get_elements", "get_sections", "search_page"}
+        recent = request.last_tool_calls[-3:]
+        if len(recent) >= 2:
+            keys = [
+                f"{tc.tool}:{_compact_params(tc.params)}"
+                for tc in recent
+                if tc.tool in _OBS_TOOLS
+            ]
+            if len(keys) >= 2 and len(set(keys)) == 1:
+                lines.append(
+                    f"WARNING: You have called {recent[-1].tool}({_compact_params(recent[-1].params)}) "
+                    "multiple times in a row and received the same result. "
+                    "Do NOT call it again. Either summarise what you have observed and call done, "
+                    "or try a DIFFERENT tool or section."
+                )
+                lines.append("")
 
     # Latest observation
     if request.observation:

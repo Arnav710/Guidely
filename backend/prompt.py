@@ -409,11 +409,20 @@ DECISION RULES (apply in order):
 7. Stuck 3 times on the SAME page?    → replan
 8. NEVER produce a URL yourself — use web_search + goto_result or click_link instead
 9. INFORMATION GOALS ("find how to", "learn", "what are the steps", "get information on"):
-   After you reach an official or trustworthy page, prefer get_page_text / get_elements to READ it.
-   If you can already answer the user in plain English, call done with {"message":"..."} — 2–6 short sentences for a senior.
-   Do NOT open more links or run another web_search once the answer is on screen.
+   After you reach a relevant page, use get_page_text OR get_elements ONCE to read it.
+   Then call done with a clear summary — do not read the same section twice.
+   If the page text you already have is enough to answer the user, call done immediately.
 10. If you are already on a good site, do not leave it to try a different site unless the current site is completely broken or irrelevant.
 11. When the question is answered or the key steps are visible in text you have seen, you MUST call done next — not navigate again.
+12. SITE COMMITMENT — once you land on a reputable, relevant site for the goal, commit to it:
+    - A single action failing (fill_field, find_and_click) is NOT a reason to leave.
+    - Try get_sections or search_page to understand the page better, then retry.
+    - Only leave a site if it is clearly wrong for the task OR you have retried 3+ times.
+    - NEVER do web_search again just because one interaction attempt failed on the current page.
+13. AVOID OBSERVATION LOOPS — if you have already called get_page_text or get_elements on a
+    section and the result did not help, do NOT call the same tool on the same section again.
+    Instead: try a different section, use search_page, take a screenshot, or call done with
+    what you already know.
 12. SITE COMMITMENT — once you land on a reputable, relevant site for the goal, commit to it:
     - A single action failing (fill_field, find_and_click) is NOT a reason to leave.
     - Try get_sections or search_page to understand the page better, then retry.
