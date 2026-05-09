@@ -297,7 +297,7 @@ class GuideModeRequest(BaseModel):
     screenshot: Optional[str] = Field(None)
     page_url: Optional[str] = Field(None, max_length=2000)
     page_title: Optional[str] = Field(None, max_length=500)
-    dom_summary: Optional[str] = Field(None, max_length=5000)
+    dom_summary: Optional[str] = Field(None, max_length=20000)
     user_question: str = Field(..., max_length=500)
 
     @field_validator("screenshot", mode="before")

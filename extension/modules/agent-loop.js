@@ -702,10 +702,13 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
         if (node && sidebarEl && sidebarEl.contains(node)) continue;
       } catch { /* bad selector — keep it */ }
       // Strip surrogate characters that would break UTF-8 encoding.
-      const safeLabel = (el.label || '').replace(/[\uD800-\uDFFF]/g, '');
+      const safeLabel = (el.label || '').replace(/[\uD800-\uDFFF]/g, '').trim();
       const safeSelector = (el.selector || '').replace(/[\uD800-\uDFFF]/g, '');
-      if (!safeLabel && !safeSelector) continue;
-      allElements.push({ ...el, label: safeLabel, selector: safeSelector });
+      // Skip unlabelled links (label is literally "a") — not useful to the model.
+      if (!safeLabel || safeLabel === 'a') continue;
+      // Truncate very deep CSS paths — keep first 120 chars which include ID/class anchors.
+      const shortSelector = safeSelector.length > 120 ? safeSelector.slice(0, 120) : safeSelector;
+      allElements.push({ ...el, label: safeLabel, selector: shortSelector });
       if (allElements.length >= 60) break;
     }
     if (allElements.length >= 60) break;
