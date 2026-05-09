@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Guidely",
-  "version": "1.0.11",
+  "version": "2.0.0",
   "description": "AI browser co-pilot for seniors — powered by local Gemma via Ollama",
   "permissions": [
     "activeTab",
     "tabs",
-    "scripting"
+    "scripting",
+    "storage"
   ],
   "host_permissions": [
     "http://localhost:8000/*",
@@ -20,6 +21,12 @@
       "matches": ["<all_urls>"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["modules/*.js", "modules/ui/*.js"],
+      "matches": ["<all_urls>"]
     }
   ],
   "action": {

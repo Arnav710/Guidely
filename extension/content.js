@@ -1,66 +1,46 @@
+// ── Guidely content script ────────────────────────────────────────────────────
+//
+// This file is the entry point injected into every page.
+// It owns: DOM serialization, highlight overlay, screenshot capture, the
+// floating "Help me" button, and orchestration of the message send flow.
+//
+// The sidebar UI, conversation storage, and API calls live in the /modules/
+// directory and are dynamically imported via chrome.runtime.getURL() so they
+// can use ES module syntax (import/export) even from a standard content script.
+
 // ─── DOM Serializer ───────────────────────────────────────────────────────────
 
 const INTERACTIVE_SELECTOR = 'a, button, input, select, textarea, [role="button"], [tabindex]';
 const MAX_ELEMENTS = 50;
-const MAX_HISTORY = 20; // user+assistant pairs for backend context
-/** Must match backend `MIN_SCREENSHOT_B64_CHARS` — only send screenshot when base64 is long enough. */
 const MIN_SCREENSHOT_B64_CHARS = 80;
 
-const GUIDELY_DEBUG_TRACE = false;
-
-/** Selectors we computed from the live DOM in `buildDomMap` — never pass other strings to querySelector. */
 let guidelyTrustedSelectors = new Set();
 
-/** Count matches without throwing on invalid selector strings (should not happen for DOM-built candidates). */
 function safeQuerySelectorAllCount(root, sel) {
   if (!sel || typeof sel !== 'string') return 0;
-  try {
-    return root.querySelectorAll(sel).length;
-  } catch {
-    return 0;
-  }
+  try { return root.querySelectorAll(sel).length; } catch { return 0; }
 }
 
 function getLabel(el) {
-  // Explicit accessible labels first
   if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
-
-  // aria-labelledby: resolve the referenced element's text
   const labelledBy = el.getAttribute('aria-labelledby');
   if (labelledBy) {
     try {
       const lbEl = document.getElementById(labelledBy);
-      if (lbEl && lbEl.innerText.trim()) return lbEl.innerText.trim().slice(0, 60);
-    } catch {
-      /* ignore */
-    }
+      if (lbEl?.innerText?.trim()) return lbEl.innerText.trim().slice(0, 60);
+    } catch { /* ignore */ }
   }
-
-  // Placeholder (inputs)
   if (el.placeholder) return el.placeholder.trim();
-
-  // title attribute
-  if (el.title && el.title.trim()) return el.title.trim().slice(0, 60);
-
-  // Visible text content (buttons, links, labels)
-  if (el.innerText && el.innerText.trim()) return el.innerText.trim().slice(0, 60);
-
-  // value attribute on submit/button inputs
+  if (el.title?.trim()) return el.title.trim().slice(0, 60);
+  if (el.innerText?.trim()) return el.innerText.trim().slice(0, 60);
   if ((el.type === 'submit' || el.type === 'button') && el.value) return el.value.trim().slice(0, 60);
-
-  // <label for="id"> association
   if (el.id) {
     try {
       const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (label && label.innerText.trim()) return label.innerText.trim().slice(0, 60);
-    } catch {
-      /* invalid id / selector edge case */
-    }
+      if (label?.innerText?.trim()) return label.innerText.trim().slice(0, 60);
+    } catch { /* ignore */ }
   }
-
-  // name attribute as last resort (common on form inputs)
-  if (el.name && el.name.trim()) return el.name.trim().slice(0, 60);
-
+  if (el.name?.trim()) return el.name.trim().slice(0, 60);
   return null;
 }
 
@@ -74,22 +54,13 @@ function getSelector(el) {
     const parent = el.parentElement;
     if (parent) {
       let siblings;
-      try {
-        siblings = Array.from(parent.querySelectorAll(tag));
-      } catch {
-        siblings = [el];
-      }
+      try { siblings = Array.from(parent.querySelectorAll(tag)); } catch { siblings = [el]; }
       const idx = siblings.indexOf(el) + 1;
-      const parentSel = getSelector(parent);
-      return `${parentSel} > ${tag}:nth-of-type(${idx})`;
+      return `${getSelector(parent)} > ${tag}:nth-of-type(${idx})`;
     }
     return tag;
   } catch {
-    try {
-      return el.tagName.toLowerCase();
-    } catch {
-      return '*';
-    }
+    try { return el.tagName.toLowerCase(); } catch { return '*'; }
   }
 }
 
@@ -97,51 +68,36 @@ function isVisible(el) {
   const rect = el.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return false;
   const style = window.getComputedStyle(el);
-  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-  return true;
+  return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
 }
 
 function buildDomMap() {
   let elements = [];
-  try {
-    elements = Array.from(document.querySelectorAll(INTERACTIVE_SELECTOR));
-  } catch {
-    guidelyTrustedSelectors = new Set();
-    return [];
-  }
+  try { elements = Array.from(document.querySelectorAll(INTERACTIVE_SELECTOR)); }
+  catch { guidelyTrustedSelectors = new Set(); return []; }
   const map = [];
   let id = 1;
   for (const el of elements) {
     if (map.length >= MAX_ELEMENTS) break;
     try {
       const label = getLabel(el);
-      // Build a descriptive fallback so the model still knows what kind of element this is
       const tag = el.tagName.toLowerCase();
       const typeAttr = el.type ? `[type=${el.type}]` : '';
-      const fallbackLabel = label || (el.id ? `#${el.id}` : null) || `${tag}${typeAttr}`;
-      // Skip elements that are completely non-identifiable (e.g., bare <div tabindex="-1">)
-      if (!fallbackLabel || fallbackLabel === 'div' || fallbackLabel === 'span') continue;
-      map.push({
-        id: id++,
-        tag,
-        type: el.type || null,
-        label: fallbackLabel,
-        selector: getSelector(el),
-        visible: isVisible(el),
-      });
-    } catch {
-      /* skip hostile or broken nodes */
-    }
+      const fallback = label || (el.id ? `#${el.id}` : null) || `${tag}${typeAttr}`;
+      if (!fallback || fallback === 'div' || fallback === 'span') continue;
+      map.push({ id: id++, tag, type: el.type || null, label: fallback, selector: getSelector(el), visible: isVisible(el) });
+    } catch { /* skip broken nodes */ }
   }
   guidelyTrustedSelectors = new Set(map.map((m) => m.selector));
   return map;
 }
 
+// Expose for manual debugging in DevTools.
 window.__guidely_buildDomMap = buildDomMap;
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
+// ─── Floating button styles ───────────────────────────────────────────────────
 
-const STYLES = `
+const BTN_STYLES = `
   #guidely-btn {
     position: fixed;
     bottom: 24px;
@@ -152,186 +108,20 @@ const STYLES = `
     border: none;
     border-radius: 28px;
     padding: 14px 22px;
-    font-size: 16px;
+    font-size: 17px;
     font-family: system-ui, sans-serif;
-    font-weight: 600;
-    cursor: pointer;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-    transition: background 0.2s;
-  }
-  #guidely-btn:hover { background: #e05a28; }
-  #guidely-btn:disabled { background: #aaa; cursor: not-allowed; }
-
-  #guidely-sidebar {
-    position: fixed;
-    top: 0;
-    right: -400px;
-    width: 384px;
-    height: 100vh;
-    z-index: 2147483645;
-    background: #fafafa;
-    box-shadow: -4px 0 24px rgba(0,0,0,0.15);
-    font-family: system-ui, -apple-system, sans-serif;
-    transition: right 0.3s ease;
-    display: flex;
-    flex-direction: column;
-    box-sizing: border-box;
-    padding: 0;
-    overflow: hidden;
-  }
-  #guidely-sidebar.open { right: 0; }
-
-  #guidely-sidebar-header {
-    flex-shrink: 0;
-    padding: 14px 44px 10px 16px;
-    background: white;
-    border-bottom: 1px solid #eee;
-  }
-  #guidely-sidebar-title {
-    font-size: 18px;
     font-weight: 700;
-    color: #FF6B35;
-    margin: 0;
-  }
-  #guidely-context-hint {
-    font-size: 11px;
-    color: #888;
-    margin: 6px 0 0;
-    line-height: 1.35;
-  }
-
-  #guidely-chat-scroll {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 12px 12px 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .guidely-msg {
-    max-width: 92%;
-    padding: 10px 12px;
-    border-radius: 14px;
-    font-size: 15px;
-    line-height: 1.45;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .guidely-msg-user {
-    align-self: flex-end;
-    background: #FF6B35;
-    color: white;
-    margin-left: 12%;
-  }
-  .guidely-msg-assistant {
-    align-self: flex-start;
-    background: white;
-    color: #222;
-    border: 1px solid #e8e8e8;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-    margin-right: 8%;
-  }
-  .guidely-msg-error {
-    align-self: flex-start;
-    background: #fff5f5;
-    color: #c0392b;
-    border: 1px solid #f5c6cb;
-    margin-right: 8%;
-  }
-  .guidely-msg-system {
-    align-self: center;
-    max-width: 100%;
-    font-size: 12px;
-    color: #888;
-    background: transparent;
-    padding: 4px 8px;
-    text-align: center;
-  }
-
-  #guidely-meta {
-    flex-shrink: 0;
-    font-size: 11px;
-    color: #999;
-    font-family: ui-monospace, monospace;
-    padding: 0 14px 8px;
-    line-height: 1.35;
-  }
-
-  #guidely-composer {
-    flex-shrink: 0;
-    padding: 10px 12px 14px;
-    background: white;
-    border-top: 1px solid #eee;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  #guidely-question {
-    width: 100%;
-    min-height: 72px;
-    max-height: 160px;
-    padding: 10px 12px;
-    font-size: 15px;
-    line-height: 1.45;
-    border: 1px solid #ddd;
-    border-radius: 12px;
-    resize: vertical;
-    box-sizing: border-box;
-    font-family: inherit;
-  }
-  #guidely-question:focus {
-    outline: none;
-    border-color: #FF6B35;
-    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.15);
-  }
-  #guidely-question:disabled {
-    background: #f3f3f3;
-    color: #888;
-  }
-  #guidely-send-row {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 10px;
-  }
-  #guidely-send-hint {
-    font-size: 11px;
-    color: #aaa;
-    flex: 1;
-    margin: 0;
-  }
-  #guidely-send {
-    padding: 10px 18px;
-    font-size: 14px;
-    font-weight: 600;
-    color: white;
-    background: #FF6B35;
-    border: none;
-    border-radius: 10px;
     cursor: pointer;
-    font-family: inherit;
+    box-shadow: 0 4px 18px rgba(255,107,53,0.4);
+    transition: background 0.2s, transform 0.1s;
+    user-select: none;
   }
-  #guidely-send:hover:not(:disabled) { background: #e05a28; }
-  #guidely-send:disabled { background: #aaa; cursor: not-allowed; }
-
-  #guidely-close {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    background: none;
-    border: none;
-    font-size: 22px;
-    cursor: pointer;
-    color: #aaa;
-    line-height: 1;
-    padding: 4px 8px;
-  }
+  #guidely-btn:hover { background: #e05a28; transform: scale(1.04); }
+  #guidely-btn:disabled { background: #aaa; cursor: not-allowed; transform: none; }
 
   @keyframes guidely-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 53, 0.5); }
-    50%       { box-shadow: 0 0 0 8px rgba(255, 107, 53, 0); }
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,107,53,0.5); }
+    50%       { box-shadow: 0 0 0 10px rgba(255,107,53,0); }
   }
   #guidely-highlight {
     position: fixed;
@@ -340,418 +130,280 @@ const STYLES = `
     border-radius: 8px;
     z-index: 2147483647;
     animation: guidely-pulse 1.2s ease-in-out infinite;
+    background: rgba(255,107,53,0.04);
   }
 `;
 
-function injectStyles() {
-  if (document.getElementById('guidely-styles')) return;
+function injectBtnStyles() {
+  if (document.getElementById('guidely-btn-styles')) return;
   const style = document.createElement('style');
-  style.id = 'guidely-styles';
-  style.textContent = STYLES;
+  style.id = 'guidely-btn-styles';
+  style.textContent = BTN_STYLES;
   document.head.appendChild(style);
 }
 
-// ─── Highlight ────────────────────────────────────────────────────────────────
+// ─── Highlight overlay ────────────────────────────────────────────────────────
 
 function clearHighlight() {
-  const existing = document.getElementById('guidely-highlight');
-  if (existing) existing.remove();
+  document.getElementById('guidely-highlight')?.remove();
 }
 
-/**
- * Resolves a node only for selectors we generated in `buildDomMap` for this tab.
- * The model may return jQuery/XPath/natural-language strings; those are never in the set, so we never
- * call the browser’s querySelector with them (avoids SyntaxError and “line 288” devtools noise).
- */
 function safeQuerySelector(sel) {
   if (!sel || typeof sel !== 'string') return null;
   const t = sel.trim();
-  if (!t || t.length > 512) return null;
-  if (!guidelyTrustedSelectors.has(t)) return null;
-  try {
-    return document.querySelector(t);
-  } catch {
-    return null;
-  }
+  if (!t || t.length > 512 || !guidelyTrustedSelectors.has(t)) return null;
+  try { return document.querySelector(t); } catch { return null; }
 }
 
-function labelsRoughlyMatch(mapLabel, wanted) {
-  const a = (mapLabel || '').trim().toLowerCase();
-  const b = (wanted || '').trim().toLowerCase();
-  if (!a || !b) return false;
-  if (a === b) return true;
-  if (a.length >= 3 && b.includes(a)) return true;
-  if (b.length >= 3 && a.includes(b)) return true;
+function labelsRoughlyMatch(a, b) {
+  const la = (a || '').trim().toLowerCase();
+  const lb = (b || '').trim().toLowerCase();
+  if (!la || !lb) return false;
+  if (la === lb) return true;
+  if (la.length >= 3 && lb.includes(la)) return true;
+  if (lb.length >= 3 && la.includes(lb)) return true;
   const words = (s) => new Set(s.split(/\s+/).filter((w) => w.length > 2));
-  const wa = words(a);
-  for (const w of words(b)) {
-    if (wa.has(w)) return true;
-  }
+  const wa = words(la);
+  for (const w of words(lb)) if (wa.has(w)) return true;
   return false;
 }
 
-/**
- * Highlight target element. Never passes the model's raw "selector" string to the DOM API unless it
- * exactly matches a selector we serialized in buildDomMap (trusted set). Junk like button:contains(...)
- * is ignored; we resolve by element_label against a fresh map first.
- */
 function highlightElement(selector, elementLabel) {
   try {
     clearHighlight();
     const s = typeof selector === 'string' ? selector.trim() : '';
     const labelRaw = typeof elementLabel === 'string' ? elementLabel.trim() : '';
-
     let el = null;
-
     if (labelRaw) {
-      const map = buildDomMap();
-      for (const item of map) {
+      for (const item of buildDomMap()) {
         if (!labelsRoughlyMatch(item.label, labelRaw)) continue;
         el = safeQuerySelector(item.selector);
         if (el) break;
       }
     }
-
-    if (!el && s && guidelyTrustedSelectors.has(s)) {
-      el = safeQuerySelector(s);
-    }
-
+    if (!el && s) el = safeQuerySelector(s);
     if (!el) return;
-
-    // Instant scroll so the element is in its final viewport position before we measure.
-    // Smooth scroll is animation-based — measuring during animation gives the wrong coordinates.
     el.scrollIntoView({ behavior: 'instant', block: 'center' });
-
-    // Double rAF: first frame triggers layout after the scroll, second frame ensures the
-    // browser has composited the new scroll position so getBoundingClientRect() is accurate.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        try {
-          const rect = el.getBoundingClientRect();
-          if (rect.width === 0 && rect.height === 0) return; // element not visible, skip
-          const overlay = document.createElement('div');
-          overlay.id = 'guidely-highlight';
-          Object.assign(overlay.style, {
-            top: `${rect.top - 4}px`,
-            left: `${rect.left - 4}px`,
-            width: `${rect.width + 8}px`,
-            height: `${rect.height + 8}px`,
-          });
-          document.body.appendChild(overlay);
-
-          // Auto-remove after 8 seconds so it doesn't stay forever
-          setTimeout(clearHighlight, 8000);
-        } catch {
-          /* ignore overlay failures */
-        }
-      });
-    });
-  } catch {
-    /* ignore invalid selectors / DOM edge cases */
-  }
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try {
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'guidely-highlight';
+        Object.assign(overlay.style, {
+          top: `${rect.top - 4}px`, left: `${rect.left - 4}px`,
+          width: `${rect.width + 8}px`, height: `${rect.height + 8}px`,
+        });
+        document.body.appendChild(overlay);
+        setTimeout(clearHighlight, 10000);
+      } catch { /* ignore */ }
+    }));
+  } catch { /* ignore */ }
 }
 
-// ─── Chat UI ────────────────────────────────────────────────────────────────
-
-const guidely_history = [];
-let guidely_sidebar_wired = false;
-let guidely_chat_initialized = false;
-
-function scrollChatToBottom() {
-  const el = document.getElementById('guidely-chat-scroll');
-  if (el) el.scrollTop = el.scrollHeight;
-}
-
-function appendChatMessage(kind, text) {
-  const scroll = document.getElementById('guidely-chat-scroll');
-  if (!scroll) return;
-  const div = document.createElement('div');
-  if (kind === 'user') {
-    div.className = 'guidely-msg guidely-msg-user';
-  } else if (kind === 'error') {
-    div.className = 'guidely-msg guidely-msg-error';
-  } else if (kind === 'system') {
-    div.className = 'guidely-msg guidely-msg-system';
-  } else {
-    div.className = 'guidely-msg guidely-msg-assistant';
-  }
-  div.textContent = text;
-  scroll.appendChild(div);
-  scrollChatToBottom();
-}
-
-function setComposerDisabled(disabled) {
-  const ta = document.getElementById('guidely-question');
-  const send = document.getElementById('guidely-send');
-  if (ta) ta.disabled = disabled;
-  if (send) send.disabled = disabled;
-}
-
-function getOrCreateSidebar() {
-  let sidebar = document.getElementById('guidely-sidebar');
-  if (sidebar) return sidebar;
-
-  sidebar = document.createElement('div');
-  sidebar.id = 'guidely-sidebar';
-  sidebar.setAttribute('role', 'dialog');
-  sidebar.setAttribute('aria-label', 'Guidely chat');
-  sidebar.innerHTML = `
-    <button type="button" id="guidely-close" title="Close">✕</button>
-    <div id="guidely-sidebar-header">
-      <div id="guidely-sidebar-title">💡 Guidely</div>
-      <p id="guidely-context-hint">Each send captures a <strong>screenshot</strong> and the page’s <strong>interactive elements</strong> for full visual context.</p>
-    </div>
-    <div id="guidely-chat-scroll" aria-live="polite"></div>
-    <div id="guidely-meta"></div>
-    <div id="guidely-composer">
-      <textarea id="guidely-question" rows="3" maxlength="2000"
-        placeholder="Message Guidely… (Enter to send, Shift+Enter for new line)"
-        aria-label="Message to Guidely"></textarea>
-      <div id="guidely-send-row">
-        <p id="guidely-send-hint">Enter send · Shift+Enter newline</p>
-        <button type="button" id="guidely-send">Send</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(sidebar);
-
-  document.getElementById('guidely-close').addEventListener('click', () => {
-    sidebar.classList.remove('open');
-    clearHighlight();
-  });
-
-  if (!guidely_sidebar_wired) {
-    guidely_sidebar_wired = true;
-    const ta = document.getElementById('guidely-question');
-    const send = document.getElementById('guidely-send');
-
-    send.addEventListener('click', () => {
-      void submitGuidelyMessage().catch(() => {});
-    });
-
-    ta.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter' && !ev.shiftKey) {
-        ev.preventDefault();
-        void submitGuidelyMessage().catch(() => {});
-      }
-    });
-  }
-
-  return sidebar;
-}
-
-function ensureWelcomeMessage() {
-  if (guidely_chat_initialized) return;
-  guidely_chat_initialized = true;
-  appendChatMessage(
-    'assistant',
-    "Hi! Ask anything about this page, or send an empty message for a suggested next step. I'll capture the page and its interactive elements each time you send.",
-  );
-}
-
-function openAskPanel() {
-  injectStyles();
-  getOrCreateSidebar();
-  ensureWelcomeMessage();
-  document.getElementById('guidely-meta').textContent = '';
-  document.getElementById('guidely-sidebar').classList.add('open');
-  document.getElementById('guidely-question').focus();
-}
-
-// ─── Send message (DOM + screenshot always, for full visual context) ─────────
+// ─── Screenshot capture ───────────────────────────────────────────────────────
 
 async function captureTabScreenshot() {
   const response = await chrome.runtime.sendMessage({ type: 'CAPTURE' });
-  if (response && response.error) throw new Error(response.error);
-  const raw = response && response.screenshot;
-  if (typeof raw !== 'string' || !raw.length) {
-    throw new Error('No screenshot returned');
-  }
+  if (response?.error) throw new Error(response.error);
+  const raw = response?.screenshot;
+  if (typeof raw !== 'string' || !raw.length) throw new Error('No screenshot returned');
   return raw;
 }
 
 function captureErrorMessage(err) {
-  const detail = err && err.message ? err.message : '';
-  const isRestricted =
-    /chrome:\/\//i.test(window.location.href) ||
+  const detail = err?.message || '';
+  const isRestricted = /chrome:\/\//i.test(window.location.href) ||
     /^(edge|brave|vivaldi):\/\//i.test(window.location.href);
-  const msg = isRestricted
+  return isRestricted
     ? "Guidely can't run on this built-in browser page. Open a normal website."
-    : "Couldn't capture this tab. Reload the page or check extension permissions.";
-  return msg + (detail ? ` (${detail})` : '');
+    : `Couldn't capture this tab.${detail ? ` (${detail})` : ''}`;
 }
 
-function buildAnalyzeRequestPayload(domMap, questionText, screenshotB64) {
-  const payload = {
-    dom_map: domMap,
-    history: guidely_history,
-    question: questionText || null,
-    enable_tools: true,
-    page_url: window.location.href,
-    page_title: document.title || null,
-  };
-  // Only attach a real base64 string long enough for the backend to accept.
-  // Omitting the key entirely (not sending null) is safest for proxy/client compat.
-  if (
-    typeof screenshotB64 === 'string' &&
-    screenshotB64.length >= MIN_SCREENSHOT_B64_CHARS
-  ) {
-    payload.screenshot = screenshotB64;
-  }
-  return payload;
+// ─── Main orchestrator ────────────────────────────────────────────────────────
+//
+// The store and sidebar are loaded as dynamic ES module imports. This allows
+// the modules to use import/export syntax while content.js stays a plain script.
+// chrome.runtime.getURL() gives the absolute extension URL for the module file.
+
+let _store = null;
+let _sidebar = null;
+let _api = null;
+let _schema = null;
+
+async function loadModules() {
+  if (_store && _sidebar && _api && _schema) return;
+  const base = chrome.runtime.getURL('modules/');
+  [_store, _api, _schema] = await Promise.all([
+    import(`${base}conversation-store.js`),
+    import(`${base}api.js`),
+    import(`${base}conversation-schema.js`),
+  ]);
+  const { mountSidebar } = await import(`${base}ui/agent-sidebar.js`);
+  _sidebar = await mountSidebar({ onSubmit: handleSubmit });
 }
 
-async function postGuidelyAnalyze(domMap, questionText, screenshotB64) {
-  const analyzeUrl = GUIDELY_DEBUG_TRACE
-    ? 'http://localhost:8000/analyze?trace=1'
-    : 'http://localhost:8000/analyze';
-  const res = await fetch(analyzeUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildAnalyzeRequestPayload(domMap, questionText, screenshotB64)),
+// ─── Message send flow ────────────────────────────────────────────────────────
+
+async function handleSubmit({ conversationId, text, autonomyLevel }) {
+  const floatBtn = document.getElementById('guidely-btn');
+  if (floatBtn) floatBtn.disabled = true;
+  clearHighlight();
+
+  const userDisplayText = text || '(Suggested next step for this page)';
+
+  // 1. Persist user message immediately so the thread shows it right away.
+  await _store.appendMessage(conversationId, {
+    role: 'user',
+    content: userDisplayText,
+    pageUrl: window.location.href,
+    pageTitle: document.title,
   });
 
-  let payload;
-  try {
-    payload = await res.json();
-  } catch {
-    return {
-      ok: false,
-      kind: 'bad_json',
-      status: res.status,
-      payload: null,
-    };
+  _sidebar.showThinkingIndicator();
+
+  // 2. Check if this looks like a workflow goal and we have no workflow yet.
+  const active = await _store.getActive();
+  const hasWorkflow = !!active?.workflow;
+  const isFirstMsg = (active?.messages?.filter((m) => m.role === 'user').length ?? 0) === 1;
+  let workflowForRequest = null;
+
+  if (!hasWorkflow && isFirstMsg && text && _schema.isGoalLike(text)) {
+    try {
+      const domMap = buildDomMap();
+      const domSummary = domMap.slice(0, 10).map((e) => `${e.label} (${e.tag})`).join(', ');
+      const planResp = await _api.fetchWorkflowPlan({
+        goal: text,
+        pageUrl: window.location.href,
+        pageTitle: document.title,
+        domSummary,
+      });
+      if (planResp?.plan?.steps?.length) {
+        await _store.attachWorkflow(conversationId, planResp.plan);
+        // Inject a system message about the plan.
+        await _store.appendMessage(conversationId, {
+          role: 'system',
+          content: `Plan created: ${planResp.plan.steps.length} steps to "${planResp.plan.goal}".`,
+        });
+        // Build the workflow snapshot for this request.
+        const updated = await _store.getActive();
+        workflowForRequest = updated?.workflow ?? null;
+      }
+    } catch { /* workflow plan is best-effort; proceed without it */ }
+  } else if (hasWorkflow) {
+    workflowForRequest = active.workflow;
   }
 
-  if (!res.ok) {
-    return { ok: false, kind: 'http', status: res.status, payload };
-  }
+  // Convert store workflow to the shape the backend expects.
+  const workflowPayload = workflowForRequest ? {
+    goal: workflowForRequest.goal,
+    steps: workflowForRequest.steps.map((s) => ({ id: s.id, description: s.description, status: s.status })),
+    current_step_idx: workflowForRequest.currentStepIdx ?? 0,
+  } : null;
 
-  return { ok: true, data: payload };
-}
+  // 3. Build history array from the conversation store (last 20 turns).
+  const conv = await _store.getActive();
+  const history = (conv?.messages ?? [])
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .slice(-20)
+    .map((m) => ({ role: m.role, content: m.content }));
 
-function formatAnalyzeError(result) {
-  if (result.kind === 'bad_json') {
-    return `Guidely returned a non-JSON response (HTTP ${result.status}). Is the backend on port 8000?`;
-  }
-  const payload = result.payload;
-  const d = payload && payload.detail;
-  if (Array.isArray(d)) {
-    return d.map((x) => (x.msg ? `${x.loc?.join?.('.') || ''}: ${x.msg}` : JSON.stringify(x))).join(' ');
-  }
-  if (typeof d === 'string') {
-    return d;
-  }
-  return JSON.stringify(payload);
-}
-
-async function submitGuidelyMessage() {
-  const sendBtn = document.getElementById('guidely-send');
-  const floatBtn = document.getElementById('guidely-btn');
-  const questionEl = document.getElementById('guidely-question');
-  const sidebarEl = document.getElementById('guidely-sidebar');
-  const raw = (questionEl.value || '').trim();
-  const userDisplayText = raw || '(Suggested next step for this page)';
-
-  sendBtn.disabled = true;
-  sendBtn.textContent = 'Sending…';
-  if (floatBtn) floatBtn.disabled = true;
-  setComposerDisabled(true);
-  clearHighlight();
-  document.getElementById('guidely-meta').textContent = '';
-
-  appendChatMessage('user', userDisplayText);
-
-  function resetUI() {
-    sendBtn.disabled = false;
-    sendBtn.textContent = 'Send';
-    if (floatBtn) floatBtn.disabled = false;
-    setComposerDisabled(false);
-    if (sidebarEl) sidebarEl.classList.add('open');
-  }
-
-  // ── Step 1: Build DOM map ──────────────────────────────────────────────────
+  // 4. DOM map.
   let domMap = [];
-  try {
-    domMap = buildDomMap();
-  } catch {
-    domMap = [];
-    guidelyTrustedSelectors = new Set();
-  }
+  try { domMap = buildDomMap(); } catch { domMap = []; guidelyTrustedSelectors = new Set(); }
 
-  // ── Step 2: Capture screenshot — always, so the model always has visual context ──
-  // Hide Guidely's own UI during capture so it doesn't obscure the page content.
+  // 5. Screenshot — hide Guidely UI first so it doesn't obscure page content.
   let screenshot = null;
+  const sidebarEl = document.getElementById('g-sidebar');
   if (sidebarEl) sidebarEl.style.opacity = '0';
   if (floatBtn) floatBtn.style.opacity = '0';
   try {
-    // Brief pause so the browser composites the opacity change before capture
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await new Promise((r) => setTimeout(r, 60));
     screenshot = await captureTabScreenshot();
   } catch (err) {
-    // Screenshot failed — continue with DOM-only context; model will still answer
-    appendChatMessage('system', `Note: ${captureErrorMessage(err)} — using DOM context only.`);
+    await _store.appendMessage(conversationId, {
+      role: 'system',
+      content: `Note: ${captureErrorMessage(err)} — using DOM context only.`,
+    });
   } finally {
     if (sidebarEl) sidebarEl.style.opacity = '';
     if (floatBtn) floatBtn.style.opacity = '';
   }
 
-  // ── Step 3: POST to backend (DOM + screenshot if available) ────────────────
+  // 6. POST /analyze.
   let data;
   try {
-    const result = await postGuidelyAnalyze(domMap, raw, screenshot);
-    if (!result.ok) {
-      appendChatMessage('error', formatAnalyzeError(result) || `Request failed (HTTP ${result.status}).`);
-      resetUI();
-      return;
-    }
-    data = result.data;
-  } catch {
-    appendChatMessage(
-      'error',
-      'Could not reach Guidely. Start the backend: cd backend && uvicorn main:app --port 8000',
-    );
-    resetUI();
+    data = await _api.runAnalyze({
+      conversationId,
+      questionText: text || null,
+      screenshot,
+      domMap,
+      history,
+      workflow: workflowPayload,
+      autonomyLevel,
+      pageUrl: window.location.href,
+      pageTitle: document.title,
+    });
+  } catch (err) {
+    _sidebar.hideThinkingIndicator();
+    const msg = err?.message?.includes('fetch')
+      ? 'Could not reach Guidely. Start the backend: cd backend && uvicorn main:app --port 8000'
+      : (err?.message || 'Something went wrong. Please try again.');
+    await _store.appendMessage(conversationId, { role: 'error', content: msg });
+    if (floatBtn) floatBtn.disabled = false;
     return;
   }
 
-  // ── Step 4: Display response ───────────────────────────────────────────────
-  appendChatMessage('assistant', data.instruction);
+  _sidebar.hideThinkingIndicator();
 
-  const meta = document.getElementById('guidely-meta');
-  let metaText = data.model_used ? `Model: ${data.model_used}` : '';
-  if (data.trace) {
-    const t = data.trace;
-    const bits = [
-      t.ollama_elapsed_ms != null ? `${t.ollama_elapsed_ms} ms` : null,
-      t.image_base64_chars != null ? `img ${t.image_base64_chars} chars` : null,
-      t.dom_element_count != null ? `dom ${t.dom_element_count}` : null,
-    ].filter(Boolean);
-    if (bits.length) metaText = [metaText, bits.join(' · ')].filter(Boolean).join(' · ');
-  }
-  meta.textContent = metaText;
-
-  // ── Step 5: Highlight the referenced element ───────────────────────────────
-  try {
-    highlightElement(data.selector, data.element_label);
-  } catch {
-    /* highlight is best-effort; never fail the send flow */
-  }
-
-  // ── Step 6: Update history ─────────────────────────────────────────────────
-  // Use the same text for both display and history so the model sees what the user actually typed
-  guidely_history.push({ role: 'user', content: userDisplayText });
-  guidely_history.push({ role: 'assistant', content: data.instruction });
-  if (guidely_history.length > MAX_HISTORY) {
-    guidely_history.splice(0, guidely_history.length - MAX_HISTORY);
+  // Handle needs_screenshot: retry with screenshot attached.
+  if (data.needs_screenshot && !screenshot) {
+    try {
+      if (sidebarEl) sidebarEl.style.opacity = '0';
+      if (floatBtn) floatBtn.style.opacity = '0';
+      await new Promise((r) => setTimeout(r, 60));
+      screenshot = await captureTabScreenshot();
+    } catch { /* fall through */ } finally {
+      if (sidebarEl) sidebarEl.style.opacity = '';
+      if (floatBtn) floatBtn.style.opacity = '';
+    }
+    if (screenshot) {
+      _sidebar.showThinkingIndicator();
+      try {
+        data = await _api.runAnalyze({
+          conversationId, questionText: text || null, screenshot, domMap,
+          history, workflow: workflowPayload, autonomyLevel,
+          pageUrl: window.location.href, pageTitle: document.title,
+        });
+      } catch (err) {
+        data = { instruction: err?.message || 'Something went wrong.', selector: null, element_label: null };
+      } finally {
+        _sidebar.hideThinkingIndicator();
+      }
+    }
   }
 
-  questionEl.value = '';
-  resetUI();
-  questionEl.focus();
+  // 7. Persist assistant response.
+  await _store.appendMessage(conversationId, {
+    role: 'assistant',
+    content: data.instruction,
+    suggestedSelector: data.selector,
+    suggestedLabel: data.element_label,
+    trace: data.trace || null,
+  });
+
+  // 8. Apply step update if the model marked a step done.
+  if (data.step_update?.step_id) {
+    await _store.applyStepUpdate(conversationId, data.step_update);
+  }
+
+  // 9. Highlight the referenced element.
+  try { highlightElement(data.selector, data.element_label); } catch { /* best-effort */ }
+
+  if (floatBtn) floatBtn.disabled = false;
 }
 
-// ─── Floating button ──────────────────────────────────────────────────────────
+// ─── Floating "Help me" button ────────────────────────────────────────────────
 
 function getOrCreateButton() {
   let btn = document.getElementById('guidely-btn');
@@ -764,10 +416,34 @@ function getOrCreateButton() {
   return btn;
 }
 
-function init() {
-  injectStyles();
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+async function init() {
+  injectBtnStyles();
+
+  try {
+    await loadModules();
+  } catch (err) {
+    // If modules fail to load (e.g. restricted page), just show the button
+    // and fail gracefully on click.
+    console.warn('[Guidely] module load failed:', err);
+    const btn = getOrCreateButton();
+    btn.addEventListener('click', () =>
+      alert("Guidely can't load on this page. Please try a normal website.")
+    );
+    return;
+  }
+
+  // Record this page visit in the active conversation.
+  try {
+    const active = await _store.getActive();
+    if (active) {
+      await _store.recordPageVisit(active.id, { url: window.location.href, title: document.title });
+    }
+  } catch { /* non-critical */ }
+
   const btn = getOrCreateButton();
-  btn.addEventListener('click', openAskPanel);
+  btn.addEventListener('click', () => _sidebar.open());
 }
 
 if (document.readyState === 'loading') {

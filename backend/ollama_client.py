@@ -30,7 +30,10 @@ from prompt import (
     SYSTEM_PROMPT_AFTER_TOOLS_DOM_FIRST,
     SYSTEM_PROMPT_WITH_TOOLS,
     SYSTEM_PROMPT_WITH_TOOLS_DOM_FIRST,
+    WORKFLOW_PLAN_PROMPT,
+    EXPLAIN_PROMPT,
 )
+from models import WorkflowSnapshot
 
 MIN_SCREENSHOT_B64_CHARS = 80
 
@@ -40,13 +43,15 @@ OLLAMA_TAGS_URL = f"{OLLAMA_BASE}/api/tags"
 
 # Fallback preference order — first match wins if multiple are installed
 # Tag reference: e2b=~5B vision, e4b=~9B vision (default), 26b/31b larger
+# Prefer the faster multimodal variants; 26b/31b are only used when explicitly
+# requested via the `model` argument (they are too slow for interactive use).
 _MODEL_PREFERENCE = [
-    "gemma4:31b",
-    "gemma4:26b",
     "gemma4:e4b",
     "gemma4:e2b",
     "gemma4:2b",
     "gemma4",
+    "gemma4:26b",
+    "gemma4:31b",
 ]
 
 _active_model: str = "gemma4:e4b"  # prefer 4B-class multimodal; overwritten after detection if missing
@@ -137,6 +142,7 @@ async def call_ollama(
     extra_user_context: Optional[str] = None,
     page_url: Optional[str] = None,
     page_title: Optional[str] = None,
+    workflow: Optional[WorkflowSnapshot] = None,
 ) -> dict:
     global _active_model, _model_detected
 
@@ -157,6 +163,7 @@ async def call_ollama(
         has_vision=has_vision,
         page_url=page_url,
         page_title=page_title,
+        workflow=workflow,
     )
 
     trace_info: dict[str, Any] = {
@@ -189,7 +196,7 @@ async def call_ollama(
         return body, elapsed_ms
 
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             body, elapsed_ms = await _do_post(client)
     except httpx.ConnectError:
         raise OllamaUnavailableError("Ollama is not running at localhost:11434")
@@ -265,6 +272,48 @@ def _normalize_analyze_out(out: dict, has_vision: bool) -> dict:
     return o
 
 
+async def call_ollama_text(
+    system_prompt: str,
+    user_text: str,
+    *,
+    model: Optional[str] = None,
+) -> str:
+    """
+    Text-only (no vision) Ollama call. Returns the raw response string.
+    Used for plan generation, explain, and vigilance triage.
+    """
+    global _active_model, _model_detected
+    if not _model_detected:
+        _active_model = await _detect_best_model()
+        _model_detected = True
+
+    chosen = model or _active_model
+    payload: dict[str, Any] = {
+        "model": chosen,
+        "system": system_prompt,
+        "prompt": user_text,
+        "stream": False,
+        "format": "json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            response = await client.post(OLLAMA_GENERATE_URL, json=payload)
+            response.raise_for_status()
+            body = response.json()
+    except httpx.ConnectError:
+        raise OllamaUnavailableError("Ollama is not running at localhost:11434")
+    except httpx.RemoteProtocolError as exc:
+        raise OllamaUnavailableError(f"Ollama disconnected unexpectedly: {exc}")
+    except httpx.HTTPStatusError as exc:
+        raise OllamaUnavailableError(f"Ollama returned HTTP {exc.response.status_code}")
+
+    err_msg = _ollama_generate_error_message(body)
+    if err_msg:
+        raise OllamaUnavailableError(f"Ollama could not run the model: {err_msg}")
+
+    return body.get("response") or ""
+
+
 async def analyze_guidely(
     elements: list[DomElement],
     history: list[HistoryEntry],
@@ -275,16 +324,19 @@ async def analyze_guidely(
     enable_tools: bool = True,
     page_url: Optional[str] = None,
     page_title: Optional[str] = None,
+    workflow: Optional[WorkflowSnapshot] = None,
 ) -> dict:
     """
     Run Gemma via Ollama. With a usable screenshot, attach vision; without it, DOM-only pass
     may set needs_screenshot for a follow-up request from the extension.
     Optionally allow one round of web_search before the final JSON answer.
+    When a workflow is provided, uses a workflow-aware system prompt and returns step_update.
     """
     from tools.web_search import web_search
 
     has_image = screenshot_usable(screenshot_b64)
     img_arg = screenshot_b64 if has_image else None
+    has_workflow = workflow is not None
 
     if not enable_tools:
         out = await call_ollama(
@@ -294,13 +346,18 @@ async def analyze_guidely(
             model=model,
             question=question,
             trace=trace,
-            system_prompt=build_system_prompt(has_vision=has_image),
+            system_prompt=build_system_prompt(has_vision=has_image, has_workflow=has_workflow),
             page_url=page_url,
             page_title=page_title,
+            workflow=workflow,
         )
         return _normalize_analyze_out(out, has_image)
 
     sys_first = SYSTEM_PROMPT_WITH_TOOLS if has_image else SYSTEM_PROMPT_WITH_TOOLS_DOM_FIRST
+    # Workflow conversations bypass the tool-request path and go straight to the focused prompt
+    if has_workflow:
+        sys_first = build_system_prompt(has_vision=has_image, has_workflow=True)
+
     r1 = await call_ollama(
         elements,
         history,
@@ -311,6 +368,7 @@ async def analyze_guidely(
         system_prompt=sys_first,
         page_url=page_url,
         page_title=page_title,
+        workflow=workflow,
     )
 
     reqs_raw = r1.get("tool_requests")
@@ -366,6 +424,7 @@ async def analyze_guidely(
         extra_user_context=extra,
         page_url=page_url,
         page_title=page_title,
+        workflow=workflow,
     )
 
     if trace:

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 
 
 class DomElement(BaseModel):
@@ -16,6 +16,30 @@ class HistoryEntry(BaseModel):
     content: str
 
 
+# ── Workflow schemas ──────────────────────────────────────────────────────────
+
+class WorkflowStepSchema(BaseModel):
+    id: str
+    description: str
+    status: Literal["pending", "in_progress", "done", "skipped", "blocked"] = "pending"
+
+
+class WorkflowSnapshot(BaseModel):
+    """Subset of client-side workflow state sent with each /analyze request."""
+    goal: str = Field(..., max_length=500)
+    steps: list[WorkflowStepSchema]
+    current_step_idx: int = Field(0, ge=0)
+
+
+class StepUpdate(BaseModel):
+    """Returned by /analyze when the model is confident a step is complete."""
+    step_id: str
+    status: Literal["pending", "in_progress", "done", "skipped", "blocked"]
+    evidence: Optional[dict] = None
+
+
+# ── Analyze ──────────────────────────────────────────────────────────────────
+
 class AnalyzeRequest(BaseModel):
     screenshot: Optional[str] = Field(
         None,
@@ -23,26 +47,15 @@ class AnalyzeRequest(BaseModel):
     )
     dom_map: list[DomElement]
     history: list[HistoryEntry] = []
-    model: Optional[str] = None  # override active model per-request
-    question: Optional[str] = Field(
-        None,
-        max_length=2000,
-        description="Optional user question about this page; answered using screenshot + DOM map.",
-    )
-    enable_tools: bool = Field(
-        True,
-        description="If true, model may request web_search; backend runs tools and calls Ollama again.",
-    )
-    page_url: Optional[str] = Field(
-        None,
-        max_length=2000,
-        description="Full URL of the page the user is viewing.",
-    )
-    page_title: Optional[str] = Field(
-        None,
-        max_length=500,
-        description="document.title of the page the user is viewing.",
-    )
+    model: Optional[str] = None
+    question: Optional[str] = Field(None, max_length=2000)
+    enable_tools: bool = Field(True)
+    page_url: Optional[str] = Field(None, max_length=2000)
+    page_title: Optional[str] = Field(None, max_length=500)
+    # Persistent conversation fields (P1/P2 — ignored by the backend for state, used for prompting)
+    conversation_id: Optional[str] = Field(None, max_length=128)
+    autonomy_level: int = Field(1, ge=0, le=3)
+    workflow: Optional[WorkflowSnapshot] = None
 
     @field_validator("screenshot", mode="before")
     @classmethod
@@ -51,7 +64,6 @@ class AnalyzeRequest(BaseModel):
             return None
         if isinstance(v, str):
             return v
-        # Mistyped JSON would otherwise raise "Input should be a valid string"; treat as no image.
         return None
 
 
@@ -60,13 +72,54 @@ class AnalyzeResponse(BaseModel):
     element_label: Optional[str] = None
     selector: Optional[str] = None
     model_used: Optional[str] = None
-    needs_screenshot: bool = Field(
-        False,
-        description="True when the DOM-only pass needs a screenshot; client should POST again with screenshot.",
-    )
-    # Present only when POST /analyze?trace=1 — confirms payload sizes and Ollama timing (no raw prompts/images).
+    needs_screenshot: bool = Field(False)
     trace: Optional[dict] = None
+    step_update: Optional[StepUpdate] = None
 
+
+# ── Workflow plan ─────────────────────────────────────────────────────────────
+
+class WorkflowContext(BaseModel):
+    page_url: Optional[str] = Field(None, max_length=2000)
+    page_title: Optional[str] = Field(None, max_length=500)
+    dom_summary: Optional[str] = Field(None, max_length=5000)
+
+
+class WorkflowPlanRequest(BaseModel):
+    goal: str = Field(..., max_length=500)
+    context: WorkflowContext
+
+
+class WorkflowPlanStepOut(BaseModel):
+    id: str
+    description: str
+    status: str = "pending"
+
+
+class WorkflowPlanOut(BaseModel):
+    goal: str
+    steps: list[WorkflowPlanStepOut]
+
+
+class WorkflowPlanResponse(BaseModel):
+    plan: WorkflowPlanOut
+
+
+# ── Explain ──────────────────────────────────────────────────────────────────
+
+class ExplainRequest(BaseModel):
+    text: str = Field(..., max_length=8000)
+    domain_hint: str = Field("generic", max_length=64)
+
+
+class ExplainResponse(BaseModel):
+    what_this_means: str
+    why: str
+    what_you_should_do: str
+    warnings: list[str] = []
+
+
+# ── Models ───────────────────────────────────────────────────────────────────
 
 class ModelInfo(BaseModel):
     name: str
