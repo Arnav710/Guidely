@@ -29,6 +29,43 @@ from prompt import AGENT_SYSTEM_PROMPT, AGENT_PLAN_PROMPT
 
 logger = logging.getLogger(__name__)
 
+# After this many agent loop iterations, force a terminal "done" so the user gets a chat answer.
+_AGENT_FORCE_DONE_AT_ITERATION = 18
+
+
+def _apply_loop_budget_force_done(
+    request: AgentStepRequest,
+    tool: str,
+    params: dict,
+    thought: str,
+    display: str,
+) -> tuple[str, dict, str, str]:
+    """If the client has run many steps, stop browsing and surface a final message."""
+    n = int(getattr(request, "loop_iteration", 0) or 0)
+    if n < _AGENT_FORCE_DONE_AT_ITERATION or tool in ("done", "ask_user"):
+        return tool, params, display, thought
+    summary = " ".join(
+        p for p in (thought or "", display or "") if p and str(p).strip()
+    ).strip()
+    if len(summary) < 40:
+        summary = (
+            "I've opened several pages while working on your request. Check the site we're on now for "
+            "official details, or tell me what you'd like me to focus on next."
+        )
+    logger.info(
+        "loop_iteration=%d >= %d — forcing done (was tool=%r)",
+        n,
+        _AGENT_FORCE_DONE_AT_ITERATION,
+        tool,
+    )
+    return (
+        "done",
+        {"message": summary[:4000]},
+        "Here's a summary for you.",
+        thought,
+    )
+
+
 # Maximum observation content lengths to keep context compact for small models.
 _MAX_SECTIONS = 10
 _MAX_ELEMENTS = 20
@@ -216,6 +253,24 @@ def _build_agent_context(request: AgentStepRequest) -> str:
         if obs_lines:
             lines.extend(obs_lines)
             lines.append("")
+
+    # Exploration budget: client sends monotonically increasing loop_iteration (1-based).
+    n = int(getattr(request, "loop_iteration", 0) or 0)
+    if n >= 6:
+        lines.append(
+            f"NOTE: Agent step #{n}. If the goal is to FIND or EXPLAIN information and you already have "
+            "enough from this page or your last observation, call done with a clear summary in "
+            '"message" for the user. Avoid another web_search or navigation unless still missing the core facts.'
+        )
+    if n >= 12:
+        lines.append(
+            f"STEP BUDGET ({n}): Prefer done with a helpful message summary for the user, "
+            "or ask_user. Do not chain more navigations unless strictly necessary."
+        )
+    if n >= 16:
+        lines.append(
+            "FINAL BUDGET WARNING: Your next tool should be done or ask_user only — no more browsing."
+        )
 
     lines.append("What is your next tool call?")
     return "\n".join(lines)
@@ -429,6 +484,10 @@ async def run_agent_step(request: AgentStepRequest) -> AgentStepResponse:
             logger.warning("replan generation failed: %s", exc)
             new_steps = None
 
+    tool, params, display, thought = _apply_loop_budget_force_done(
+        request, tool, params, thought, display,
+    )
+
     return AgentStepResponse(
         thought=thought or None,
         tool=tool,
@@ -493,9 +552,10 @@ async def stream_agent_step(request: AgentStepRequest) -> AsyncIterator[str]:
 
     conv_id_log = (request.conversation_id or "?")[:8]
     logger.info(
-        "[stream %s] BEGIN goal=%r step=%d/%d page=%r vision=%s",
+        "[stream %s] BEGIN goal=%r step=%d/%d iter=%d page=%r vision=%s",
         conv_id_log, request.plan.goal[:60],
         request.plan.current_step_idx, len(request.plan.steps),
+        int(getattr(request, "loop_iteration", 0) or 0),
         (request.page_url or "")[:80], has_vision,
     )
 
@@ -729,6 +789,11 @@ async def stream_agent_step(request: AgentStepRequest) -> AsyncIterator[str]:
         except Exception as exc:
             logger.warning("replan generation failed: %s", exc)
             new_steps = None
+
+    # Hard cap on exploration — guarantees a final chat message for the user.
+    tool, params, display, thought = _apply_loop_budget_force_done(
+        request, tool, params, thought, display,
+    )
 
     # ── Final safety net: never emit a server-only tool to the extension ──────
     _CLIENT_TOOLS = {

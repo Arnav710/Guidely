@@ -398,6 +398,12 @@ DECISION RULES (apply in order):
 6. Don't know the page layout?        → get_sections (only when you genuinely don't know)
 7. Stuck 3 times?                     → replan
 8. NEVER produce a URL yourself — use web_search + goto_result or click_link instead
+9. INFORMATION GOALS ("find how to", "learn", "what are the steps", "get information on"):
+   After you reach an official or trustworthy page, prefer get_page_text / get_elements to READ it.
+   If you can already answer the user in plain English, call done with {"message":"..."} — 2–6 short sentences for a senior.
+   Do NOT open more links or run another web_search once the answer is on screen.
+10. If you are already on a good site (e.g. .gov for government topics), do not bounce to third-party summaries unless the official page is useless.
+11. When the question is answered or the key steps are visible in text you have seen, you MUST call done next — not navigate again.
 
 FAST PATH EXAMPLES:
 Goal: "Renew driver's license in Utah"

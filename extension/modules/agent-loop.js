@@ -20,7 +20,8 @@ import * as store from './conversation-store.js';
 import { agentStart, agentStepStream, extendWorkflow } from './api.js';
 
 // Safety ceiling: stop the loop after this many tool calls to prevent infinite loops.
-const MAX_LOOP_CALLS = 60;
+// Backend also forces `done` around iteration 18 when `loop_iteration` is sent.
+const MAX_LOOP_CALLS = 24;
 
 // Attribute injected on semantic landmark elements so we can find them by ID.
 const SECTION_ATTR = 'data-guidely-section';
@@ -767,6 +768,7 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
           screenshot: currentScreenshot,
           observation: currentObservation,
           retryCount: session.retryCount || 0,
+          loopIteration: callCount,
         },
         {
           onThinking: () => { /* bubble already shown */ },
@@ -1102,9 +1104,12 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
     }
 
     if (callCount >= MAX_LOOP_CALLS) {
-      const msg = 'The agent has reached its action limit. Please start a new conversation.';
-      onError?.(msg);
-      await store.setAgentStatus(conversationId, 'error');
+      const msg =
+        'I stopped after many steps so this session does not run forever. You can start a new chat or tell me what to do next on this page.';
+      await store.appendMessage(conversationId, { role: 'assistant', content: msg });
+      onMessage?.({ role: 'assistant', content: msg });
+      await store.setAgentStatus(conversationId, 'done');
+      onDone?.();
     }
   } finally {
     prevMarkToolDone?.(); // Mark last tool done before the loop fully exits.

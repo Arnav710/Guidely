@@ -59,6 +59,7 @@ export async function agentStep({
   screenshot = null,
   observation = null,
   retryCount = 0,
+  loopIteration = 0,
 } = {}) {
   const body = {
     goal,
@@ -68,6 +69,7 @@ export async function agentStep({
     page_title: pageTitle || null,
     observation: observation || null,
     retry_count: retryCount,
+    loop_iteration: loopIteration,
   };
   if (screenshot && screenshot.length >= 80) body.screenshot = screenshot;
   return _post('/agent/step', body);
@@ -87,7 +89,7 @@ export async function agentStep({
  * Returns a Promise that resolves once the stream is complete (or on error).
  */
 export async function agentStepStream(
-  { goal, plan, conversationId = null, lastToolCalls = [], pageUrl = '', pageTitle = '', screenshot = null, observation = null, retryCount = 0 } = {},
+  { goal, plan, conversationId = null, lastToolCalls = [], pageUrl = '', pageTitle = '', screenshot = null, observation = null, retryCount = 0, loopIteration = 0 } = {},
   { onThinking, onThought, onSearching, onReplanning, onDone, onError } = {},
 ) {
   const body = {
@@ -99,6 +101,7 @@ export async function agentStepStream(
     observation: observation || null,
     retry_count: retryCount,
     conversation_id: conversationId || null,
+    loop_iteration: loopIteration,
   };
   if (screenshot && screenshot.length >= 80) body.screenshot = screenshot;
 

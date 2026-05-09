@@ -201,6 +201,8 @@ class AgentStepRequest(BaseModel):
     model: Optional[str] = None
     # Conversation ID — used to key the search results cache for goto_result resolution.
     conversation_id: Optional[str] = Field(None, max_length=128)
+    # How many agent loop iterations have run (1-based from client). Used to cap endless exploration.
+    loop_iteration: int = Field(0, ge=0, le=500)
 
     @field_validator("screenshot", mode="before")
     @classmethod
