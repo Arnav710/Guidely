@@ -685,17 +685,32 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
   onMessage?.({ role: 'system', content: 'Looking at your screen to find what you should click…' });
 
   const { screenshot, sections } = await _autoCapture();
-  const domSummary = (sections?.sections || [])
-    .slice(0, 8)
-    .map((s) => `${s.label} (${s.element_count} elements)`)
-    .join('\n');
+
+  // Build a flat element list from every section so the model has real CSS
+  // selectors to choose from — same data the autonomous agent uses for clicking.
+  const allElements = [];
+  for (const sec of (sections?.sections || [])) {
+    const secElements = getElementsInSection(sec.id);
+    for (const el of (secElements?.elements || [])) {
+      allElements.push(el);
+      if (allElements.length >= 60) break;
+    }
+    if (allElements.length >= 60) break;
+  }
+
+  // Format as a numbered list so the model can reference items by selector.
+  const domMap = allElements.length > 0
+    ? allElements.map((el, i) =>
+        `${i + 1}. [${el.tag}] "${el.label}" — selector: ${el.selector}`
+      ).join('\n')
+    : '(no interactive elements found)';
 
   try {
     const result = await guideMode({
       screenshot,
       pageUrl: window.location.href,
       pageTitle: document.title,
-      domSummary,
+      domSummary: domMap,
       userQuestion,
     });
 
