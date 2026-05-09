@@ -819,7 +819,6 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
       if (tool === 'done') {
         markToolDone();
         const msg = String(params?.message || 'Task complete!');
-        await store.appendMessage(conversationId, { role: 'assistant', content: msg });
         await store.setAgentStatus(conversationId, 'done');
         onMessage?.({ role: 'assistant', content: msg });
         onDone?.();
@@ -829,7 +828,6 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
       if (tool === 'ask_user') {
         markToolDone();
         const question = String(params?.question || 'What would you like me to do?');
-        await store.appendMessage(conversationId, { role: 'assistant', content: question });
         await store.updateAgentSession(conversationId, {
           status: 'paused',
           pendingUserQuestion: question,
@@ -889,7 +887,6 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
 
           if (!extended) {
             const msg = 'All done! The task is complete.';
-            await store.appendMessage(conversationId, { role: 'assistant', content: msg });
             await store.setAgentStatus(conversationId, 'done');
             onMessage?.({ role: 'assistant', content: msg });
             onDone?.();
@@ -913,7 +910,6 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
         } else {
           // Replan generation failed — surface to user.
           const q = "I'm stuck and couldn't figure out a new plan. Can you tell me what you see on the page?";
-          await store.appendMessage(conversationId, { role: 'assistant', content: q });
           await store.updateAgentSession(conversationId, { status: 'paused', pendingUserQuestion: q });
           onMessage?.({ role: 'assistant', content: q });
           onStatusChange?.('paused');
@@ -1095,7 +1091,6 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
         );
         markToolDone();
         const q = `I tried to use an unknown action (${tool}). Can you tell me what to do next?`;
-        await store.appendMessage(conversationId, { role: 'assistant', content: q });
         await store.updateAgentSession(conversationId, { status: 'paused', pendingUserQuestion: q });
         onMessage?.({ role: 'assistant', content: q });
         onStatusChange?.('paused');
@@ -1106,7 +1101,6 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
     if (callCount >= MAX_LOOP_CALLS) {
       const msg =
         'I stopped after many steps so this session does not run forever. You can start a new chat or tell me what to do next on this page.';
-      await store.appendMessage(conversationId, { role: 'assistant', content: msg });
       onMessage?.({ role: 'assistant', content: msg });
       await store.setAgentStatus(conversationId, 'done');
       onDone?.();
