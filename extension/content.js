@@ -33,14 +33,10 @@ const BTN_STYLES = `
   #guidely-btn:disabled { background: #aaa; cursor: not-allowed; transform: none; }
   #g-sidebar.g-open ~ #guidely-btn { display: none !important; }
 
-  @keyframes guidely-ring-pulse {
-    0%, 100% { box-shadow: 0 0 0 4px rgba(255,107,53,0.45); }
-    50%       { box-shadow: 0 0 0 10px rgba(255,107,53,0); }
-  }
+  /* Static rectangular ring: no pulse (pulse + outline looked broken on rounded links). */
   .guidely-ring {
-    outline: 3px solid #FF6B35 !important;
-    outline-offset: 4px !important;
-    animation: guidely-ring-pulse 1s ease-in-out infinite !important;
+    outline: 2px solid #FF6B35 !important;
+    outline-offset: 2px !important;
     scroll-margin: 80px;
   }
 `;
@@ -118,13 +114,16 @@ function _querySelectorWithIdFallback(selector) {
   return null;
 }
 
-function highlightElement(selector, label) {
+function highlightElement(selector, label, opts = {}) {
   clearHighlight();
   if (!selector && !label) {
     console.log('[Guidely highlight] skipped — no selector or label');
     return;
   }
 
+  const durationMs = typeof opts.durationMs === 'number' && opts.durationMs > 0
+    ? opts.durationMs
+    : 12000;
   let el = null;
   let selectorError = null;
   if (selector) {
@@ -175,7 +174,7 @@ function highlightElement(selector, label) {
   _highlightTarget = el;
   el.classList.add('guidely-ring');
   try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* ignore */ }
-  _highlightTimer = setTimeout(clearHighlight, 12000);
+  _highlightTimer = setTimeout(clearHighlight, durationMs);
 }
 
 // ── Module handles ────────────────────────────────────────────────────────────
@@ -297,9 +296,11 @@ function _makeCallbacks(conversationId) {
         },
       });
     },
-    onDone() {
+    onDone(opts = {}) {
       _sidebar.setAgentStatus('idle');
-      clearHighlight();
+      // Guide mode finishes after showing a highlight — do not clear it here;
+      // the highlight timer (or the user's next message) clears it.
+      if (!opts.keepHighlight) clearHighlight();
     },
     onError(msg) {
       _sidebar.appendLiveMessage({ role: 'error', content: msg });
