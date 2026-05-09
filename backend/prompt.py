@@ -402,6 +402,12 @@ DECISION RULES (apply in order):
    If NO — call ask_user immediately with a single question covering all missing details.
    Do NOT navigate, search, or take any action until you have the required information.
 
+   CRITICAL EXCEPTION — do NOT ask_user when the answer is already visible on screen:
+   If the current page, screenshot, or DOM already shows the relevant content
+   (e.g. an open email, a visible form, a product page), use that as your context.
+   NEVER ask the user to describe something you can already see.
+   Instead: read the page (get_page_text / get_elements / screenshot) and act.
+
    RULE: If the conversation history already contains the answer, do NOT ask again — use it.
    RULE: Combine all missing fields into ONE ask_user call — never ask one field at a time.
    RULE: The ask_user params key MUST be "question":
@@ -458,13 +464,21 @@ Some tasks cannot be executed without specific details from the user.
 Ask yourself: "Could I complete this task right now with only the information given?"
 If the answer is NO because required specifics are missing, set needs_clarification = true.
 
-  Examples of tasks that typically need more details before starting:
+  CRITICAL EXCEPTION — page context counts as "information given":
+  If the user is already on a relevant page (e.g. an open email, a product page, a form),
+  the page content IS the context. Do NOT ask for clarification when the answer is on screen.
+  Examples where needs_clarification must be FALSE:
+  - User is viewing an email and asks "how do I stop getting these" → page shows sender + Unsubscribe
+  - User is on a product page and asks "how do I buy this" → page shows the item
+  - User is on a form and asks "what do I fill in here" → page shows the fields
+
+  Examples of tasks that typically DO need more details:
   - Booking or reserving anything: needs dates, times, quantities, or locations if not given.
   - Searching for something personalised: needs names, IDs, account info, or preferences if not given.
   - Changing account or profile data: needs the new value if not given.
 
-  Rule: If ANY piece of information that is REQUIRED to complete the first step is missing,
-        ask for it before generating a plan.
+  Rule: If ANY piece of information that is REQUIRED to complete the first step is missing
+        AND cannot be inferred from the current page, ask for it before generating a plan.
   Rule: If the goal already contains all required details, do NOT ask — go straight to planning.
   Rule: Ask for ALL missing details in ONE question (not one at a time).
 
