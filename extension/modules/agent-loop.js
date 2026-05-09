@@ -14,10 +14,17 @@
  *   startAgentLoop(conversationId, goal, callbacks)
  *   resumeAgentLoop(conversationId, callbacks)
  *   respondToUserQuestion(conversationId, answer, callbacks)
+ *
+ * Debug: Open DevTools (F12 or Cmd+Opt+I) while the **website tab** is focused
+ * (e.g. Gmail) — not the extension popup, not chrome://extensions. In Console,
+ * keep default levels on (especially "Verbose" / all levels) and filter by: Guidely
+ *
+ * Extra detail: set window.__GUIDELY_DEBUG__ = true then reload for verbose dom_map /
+ * selector snippets in guide mode.
  */
 
 import * as store from './conversation-store.js';
-import { agentStart, agentStepStream, extendWorkflow } from './api.js';
+import { agentStart, agentStepStream, extendWorkflow, summarizePage, guideMode } from './api.js';
 
 // Safety ceiling: stop the loop after this many tool calls to prevent infinite loops.
 // Backend also forces `done` around iteration 18 when `loop_iteration` is sent.
@@ -25,6 +32,25 @@ const MAX_LOOP_CALLS = 24;
 
 // Attribute injected on semantic landmark elements so we can find them by ID.
 const SECTION_ATTR = 'data-guidely-section';
+
+/**
+ * Debug logging — always logs concise milestones. Set window.__GUIDELY_DEBUG__ = true
+ * in the page DevTools console for verbose dumps (e.g. first lines of dom_map).
+ */
+function _guidelyLog(tag, data = {}) {
+  try {
+    // Use console.log — many users disable "Info" in DevTools, which hides console.info.
+    console.log(`[Guidely ${tag}]`, data);
+  } catch { /* ignore */ }
+}
+
+function _guidelyLogVerbose(tag, data = {}) {
+  try {
+    if (typeof window !== 'undefined' && window.__GUIDELY_DEBUG__) {
+      console.log(`[Guidely ${tag}:verbose]`, data);
+    }
+  } catch { /* ignore */ }
+}
 
 // Module-level flag: only one loop runs at a time per content-script context.
 let _loopRunning = false;
@@ -39,7 +65,7 @@ const _KNOWN_TOOLS = new Set([
   'find_and_click', 'fill_field',
   'click_link', 'goto_result',
   'click', 'type_text', 'scroll',
-  'complete_step', 'replan', 'ask_user', 'done',
+  'complete_step', 'replan', 'ask_user', 'ask_action', 'done',
   // Legacy names — map to the new tools via normaliser
   'navigate', 'navigate_and_read',
 ]);
@@ -193,11 +219,32 @@ function _extractElements(containerEl, sectionId) {
   return { type: 'elements', section_id: sectionId, elements };
 }
 
+/** Higher rank = more desirable target for clicks/highlights. */
+function _highlightTagRank(tag) {
+  const t = String(tag || '').toLowerCase();
+  if (t === 'a' || t === 'button') return 40;
+  if (t === 'span') return 25;
+  if (t === 'input' || t === 'select' || t === 'textarea') return 20;
+  if (t === 'label') return 15;
+  if (t === 'li') return 0;
+  return 10;
+}
+
 // ── Fuzzy page search (fast locate without knowing section) ───────────────────
 
-export function searchPage(query) {
+/**
+ * @param {string} query
+ * @param {{ excludeGuidelySidebar?: boolean, preferActionTags?: boolean, maxMatches?: number }} [options]
+ */
+export function searchPage(query, options = {}) {
   const q = String(query || '').toLowerCase().trim();
   if (!q) return { type: 'search', query, matches: [] };
+
+  const {
+    excludeGuidelySidebar = true,
+    preferActionTags = false,
+    maxMatches = 8,
+  } = options;
 
   // Search across interactive elements AND text nodes (headings, labels, paragraphs).
   const SEARCHABLE = [
@@ -208,11 +255,13 @@ export function searchPage(query) {
   let candidates = [];
   try { candidates = Array.from(document.querySelectorAll(SEARCHABLE)); } catch { /* ignore */ }
 
+  const sidebar = excludeGuidelySidebar ? document.getElementById('g-sidebar') : null;
   const matches = [];
 
   for (const el of candidates) {
-    if (matches.length >= 8) break;
     try {
+      if (sidebar && sidebar.contains(el)) continue;
+
       const text = (
         el.getAttribute('aria-label') ||
         el.textContent ||
@@ -238,10 +287,18 @@ export function searchPage(query) {
         context,
       });
     } catch { /* skip */ }
+    if (matches.length >= 200) break;
   }
 
-  matches.sort((a, b) => b.score - a.score);
-  return { type: 'search', query, matches: matches.slice(0, 8) };
+  matches.sort((a, b) => {
+    const ta = preferActionTags ? _highlightTagRank(a.tag) : 0;
+    const tb = preferActionTags ? _highlightTagRank(b.tag) : 0;
+    const sa = a.score * 100 + ta;
+    const sb = b.score * 100 + tb;
+    return sb - sa;
+  });
+
+  return { type: 'search', query, matches: matches.slice(0, maxMatches) };
 }
 
 function _fuzzyScore(text, query) {
@@ -622,6 +679,194 @@ function _wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 // ── Agent loop public API ─────────────────────────────────────────────────────
 
+// ── Summarize mode (one-shot) ─────────────────────────────────────────────────
+
+/**
+ * Take a fresh screenshot + extract visible text → ask backend to summarize.
+ * No loop, no planning — one request in, one plain-English response out.
+ *
+ * @param {string} conversationId
+ * @param {string} userQuestion  What the user asked ("summarize what I see", etc.)
+ * @param {{ onMessage, onDone, onError, onStatusChange }} callbacks
+ */
+export async function runSummarize(conversationId, userQuestion, callbacks = {}) {
+  const { onMessage, onDone, onError, onStatusChange } = callbacks;
+  if (_loopRunning) return;
+
+  await store.setAgentStatus(conversationId, 'running');
+  onStatusChange?.('running');
+  onMessage?.({ role: 'system', content: 'Reading what\'s on your screen…' });
+
+  const { screenshot } = await _autoCapture();
+  const pageText = (document.body?.innerText || '')
+    .replace(/[\uD800-\uDFFF]/g, '')
+    .slice(0, 8000);
+
+  _guidelyLog('summarize', {
+    conversationId,
+    pageTextChars: pageText.length,
+    screenshotB64Chars: (screenshot || '').length,
+    questionPreview: String(userQuestion || '').slice(0, 120),
+  });
+
+  try {
+    const result = await summarizePage({
+      screenshot,
+      pageText,
+      pageUrl: window.location.href,
+      pageTitle: document.title,
+      userQuestion,
+    });
+    const summary = result?.summary || 'I couldn\'t read this page clearly. Please try again.';
+    _guidelyLog('summarize:ok', {
+      summaryChars: summary.length,
+      model: result?.model_used ?? null,
+    });
+    onMessage?.({ role: 'assistant', content: summary });
+  } catch (err) {
+    _guidelyLog('summarize:error', { message: err?.message || String(err) });
+    onError?.(`Couldn't summarize: ${err.message}`);
+    await store.setAgentStatus(conversationId, 'error');
+    onStatusChange?.('error');
+    return;
+  }
+
+  await store.setAgentStatus(conversationId, 'idle');
+  onDone?.();
+}
+
+// ── Guide mode (highlight-only) ───────────────────────────────────────────────
+
+/**
+ * Take a fresh screenshot + build a compact DOM map → ask backend to identify
+ * the one element the user should interact with → highlight it.
+ * No navigation, no clicking, no form filling.
+ *
+ * @param {string} conversationId
+ * @param {string} userQuestion  The user's goal ("where do I click to renew?", etc.)
+ * @param {Function} highlightFn  content.js highlightElement(selector, label)
+ * @param {{ onMessage, onDone, onError, onStatusChange }} callbacks
+ */
+export async function runGuideMode(conversationId, userQuestion, highlightFn, callbacks = {}) {
+  const { onMessage, onDone, onError, onStatusChange } = callbacks;
+  if (_loopRunning) return;
+
+  await store.setAgentStatus(conversationId, 'running');
+  onStatusChange?.('running');
+  onMessage?.({ role: 'system', content: 'Looking at your screen to find what you should click…' });
+
+  const { screenshot, sections } = await _autoCapture();
+
+  // Build a flat element list from every section.
+  // Exclude Guidely's own sidebar elements (they live inside #g-sidebar).
+  const sidebarEl = document.getElementById('g-sidebar');
+  // selectorMap: index (1-based) → full original selector, used for highlighting.
+  const selectorMap = {};
+  const allElements = [];
+  for (const sec of (sections?.sections || [])) {
+    const secElements = getElementsInSection(sec.id);
+    for (const el of (secElements?.elements || [])) {
+      // Skip elements that belong to Guidely's own UI.
+      try {
+        const node = document.querySelector(el.selector);
+        if (node && sidebarEl && sidebarEl.contains(node)) continue;
+      } catch { /* bad selector — keep it */ }
+      // Strip surrogate characters that would break UTF-8 encoding.
+      const safeLabel = (el.label || '').replace(/[\uD800-\uDFFF]/g, '').trim();
+      const safeSelector = (el.selector || '').replace(/[\uD800-\uDFFF]/g, '');
+      // Skip unlabelled links (label is literally "a") — not useful to the model.
+      if (!safeLabel || safeLabel === 'a') continue;
+      const idx = allElements.length + 1;
+      // Store the FULL selector locally for highlighting.
+      selectorMap[idx] = safeSelector;
+      // Send the model only a short display selector (ID/class prefix ≤80 chars) to keep
+      // the prompt compact — the model picks by index, not by reproducing the full path.
+      const displaySelector = safeSelector.length > 80 ? safeSelector.slice(0, 80) + '…' : safeSelector;
+      allElements.push({ tag: el.tag, label: safeLabel, selector: displaySelector, idx });
+      if (allElements.length >= 60) break;
+    }
+    if (allElements.length >= 60) break;
+  }
+
+  // Format as a numbered list. Model is asked to reply with the item number.
+  const domMap = allElements.length > 0
+    ? allElements.map((el) =>
+        `${el.idx}. [${el.tag}] "${el.label}" — selector: ${el.selector}`
+      ).join('\n')
+    : '(no interactive elements found)';
+
+  _guidelyLog('guide:prepare', {
+    conversationId,
+    sectionCount: (sections?.sections || []).length,
+    candidateElements: allElements.length,
+    domMapChars: domMap.length,
+    screenshotB64Chars: (screenshot || '').length,
+    questionPreview: String(userQuestion || '').slice(0, 120),
+  });
+  _guidelyLogVerbose('guide:dom_map', {
+    head: domMap.slice(0, 1200),
+  });
+
+  try {
+    const result = await guideMode({
+      screenshot,
+      pageUrl: window.location.href,
+      pageTitle: document.title,
+      domSummary: domMap,
+      userQuestion,
+    });
+
+    const instruction = result?.instruction || 'I couldn\'t identify the right element. Please try again.';
+    onMessage?.({ role: 'assistant', content: instruction });
+
+    // Resolve the selector: prefer looking up the full selector from selectorMap
+    // using the item number the model returned, fall back to the model's raw selector,
+    // then fall back to a label-based fuzzy search in highlightFn.
+    let resolvedSelector = null;
+    let resolveSource = 'none';
+    if (result?.item_number && selectorMap[result.item_number]) {
+      resolvedSelector = selectorMap[result.item_number];
+      resolveSource = 'item_number_map';
+    } else if (result?.selector) {
+      // Try the model's selector directly (works when it's an ID like #avWBGd-9).
+      resolvedSelector = result.selector;
+      resolveSource = 'model_selector';
+    }
+
+    _guidelyLog('guide:response', {
+      item_number: result?.item_number ?? null,
+      label: result?.label ? String(result.label).slice(0, 80) : null,
+      modelSelectorChars: result?.selector ? String(result.selector).length : 0,
+      resolvedSelectorChars: resolvedSelector ? resolvedSelector.length : 0,
+      resolveSource,
+      mapHasItem: !!(result?.item_number && selectorMap[result.item_number]),
+    });
+    _guidelyLogVerbose('guide:selectors', {
+      modelSelector: result?.selector || null,
+      resolvedHead: resolvedSelector ? resolvedSelector.slice(0, 200) : null,
+    });
+
+    if (highlightFn && (resolvedSelector || result?.label)) {
+      highlightFn(resolvedSelector, result?.label || null);
+    } else {
+      _guidelyLog('guide:highlight_skipped', {
+        hasHighlightFn: !!highlightFn,
+        hasResolved: !!resolvedSelector,
+        hasLabel: !!result?.label,
+      });
+    }
+  } catch (err) {
+    _guidelyLog('guide:error', { message: err?.message || String(err) });
+    onError?.(`Couldn't identify element: ${err.message}`);
+    await store.setAgentStatus(conversationId, 'error');
+    onStatusChange?.('error');
+    return;
+  }
+
+  await store.setAgentStatus(conversationId, 'idle');
+  onDone?.();
+}
+
 /**
  * Start a new agent loop for a goal.
  * 1. Calls /agent/start to generate a plan.
@@ -638,8 +883,11 @@ export async function startAgentLoop(conversationId, goal, callbacks = {}) {
   if (_loopRunning) return;
   await store.setAgentStatus(conversationId, 'running');
 
+  // Take a fresh screenshot before planning so the model sees current state.
+  const { screenshot: freshScreenshot, sections: freshSections } = await _autoCapture();
+
   // Seed plan with a compact page summary (first ~5 section labels).
-  const sections = getPageSections();
+  const sections = freshSections || getPageSections();
   const domSummary = sections.sections
     .slice(0, 5)
     .map((s) => `${s.label} (${s.element_count})`)
@@ -678,9 +926,8 @@ export async function startAgentLoop(conversationId, goal, callbacks = {}) {
 
   onMessage?.({ role: 'system', content: `Starting with ${planData.plan.steps.length} step${planData.plan.steps.length > 1 ? 's' : ''} — more will be planned as we go.` });
 
-  // Start the loop. Pass the page sections we already captured so the LLM
-  // immediately sees page structure without needing an extra get_sections call.
-  await _runLoop(conversationId, callbacks, { screenshot: null, observation: sections });
+  // Pass the fresh screenshot we captured pre-plan, plus the page sections.
+  await _runLoop(conversationId, callbacks, { screenshot: freshScreenshot || null, observation: sections });
 }
 
 /**
@@ -709,12 +956,49 @@ export async function respondToUserQuestion(conversationId, answer, callbacks = 
 
   await store.setAgentStatus(conversationId, 'running');
 
+  // Take a fresh screenshot so the model sees the current page state.
+  const { screenshot: freshScreenshot } = await _autoCapture();
+
   // Surface the user's reply as an action result so the LLM understands the answer.
   const answerObs = {
     type: 'action_result', tool: 'ask_user', success: true,
     details: `User replied: "${String(answer).slice(0, 200)}"`,
   };
-  await _runLoop(conversationId, callbacks, { screenshot: null, observation: answerObs });
+  await _runLoop(conversationId, callbacks, { screenshot: freshScreenshot || null, observation: answerObs });
+}
+
+/**
+ * Handle the user's response to an ask_action prompt.
+ *
+ * choice: 'do_it'    — agent executes the identified action automatically.
+ * choice: 'guide_me' — agent calls done with a plain-English instruction
+ *                      pointing to the already-highlighted element.
+ */
+export async function respondToActionChoice(conversationId, choice, callbacks = {}) {
+  if (_loopRunning) return;
+  const session = await store.getAgentSession(conversationId);
+  if (!session || session.status !== 'paused') return;
+
+  const selector = session.pendingActionSelector || null;
+  const label = session.pendingActionLabel || '';
+
+  await store.setAgentStatus(conversationId, 'running');
+
+  if (choice === 'do_it') {
+    // Inject an observation that tells the model to go ahead and click.
+    const obs = {
+      type: 'action_result', tool: 'ask_action', success: true,
+      details: `User chose: do it for me. Use find_and_click or click to activate: label="${label}" selector="${selector}".`,
+    };
+    await _runLoop(conversationId, callbacks, { screenshot: null, observation: obs });
+  } else {
+    // 'guide_me' — tell the model to summarise with a pointer to the element.
+    const obs = {
+      type: 'action_result', tool: 'ask_action', success: true,
+      details: `User chose: show me where. Call done with a friendly plain-English instruction telling the user to click the highlighted element: label="${label}".`,
+    };
+    await _runLoop(conversationId, callbacks, { screenshot: null, observation: obs });
+  }
 }
 
 /**
@@ -739,12 +1023,15 @@ export async function continueAgentLoop(conversationId, userMessage, callbacks =
 
   await store.setAgentStatus(conversationId, 'running');
 
+  // Take a fresh screenshot so the model sees the current page state.
+  const { screenshot: freshScreenshot } = await _autoCapture();
+
   // Surface the user's message as an observation so the LLM sees it immediately.
   const obs = {
     type: 'action_result', tool: 'ask_user', success: true,
     details: `User follow-up: "${String(userMessage).slice(0, 200)}"`,
   };
-  await _runLoop(conversationId, callbacks, { screenshot: null, observation: obs });
+  await _runLoop(conversationId, callbacks, { screenshot: freshScreenshot || null, observation: obs });
 }
 
 // ── Core loop ─────────────────────────────────────────────────────────────────
@@ -753,7 +1040,7 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
   if (_loopRunning) return;
   _loopRunning = true;
 
-  const { onToolCall, onMessage, onDone, onError, onStatusChange, onStartStreaming } = callbacks;
+  const { onToolCall, onMessage, onDone, onError, onStatusChange, onStartStreaming, onActionChoice } = callbacks;
 
   let currentScreenshot = initial.screenshot || null;
   let currentObservation = initial.observation || null;
@@ -885,6 +1172,24 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
           pendingUserQuestion: question,
         });
         onMessage?.({ role: 'assistant', content: question });
+        onStatusChange?.('paused');
+        break;
+      }
+
+      if (tool === 'ask_action') {
+        markToolDone();
+        const question = String(params?.question || 'I found the element. Would you like me to act on it?');
+        const selector = params?.selector || null;
+        const label = String(params?.label || '');
+        // Save the pending action context so the loop can execute it if the user chooses "do it".
+        await store.updateAgentSession(conversationId, {
+          status: 'paused',
+          pendingUserQuestion: question,
+          pendingActionSelector: selector,
+          pendingActionLabel: label,
+        });
+        // Fire the highlight callback — content.js will highlight the element.
+        onActionChoice?.({ question, selector, label });
         onStatusChange?.('paused');
         break;
       }

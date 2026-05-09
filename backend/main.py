@@ -22,10 +22,15 @@ from models import (
     AgentStartResponse,
     AgentStepRequest,
     AgentStepResponse,
+    SummarizeRequest,
+    SummarizeResponse,
+    GuideModeRequest,
+    GuideModeResponse,
 )
 from ollama_client import (
     analyze_guidely,
     call_ollama_text,
+    call_ollama_multimodal,
     extract_json,
     list_ollama_models,
     get_active_model,
@@ -33,7 +38,7 @@ from ollama_client import (
     OllamaUnavailableError,
     MIN_SCREENSHOT_B64_CHARS,
 )
-from prompt import WORKFLOW_PLAN_PROMPT, WORKFLOW_EXTEND_PROMPT, EXPLAIN_PROMPT
+from prompt import WORKFLOW_PLAN_PROMPT, WORKFLOW_EXTEND_PROMPT, EXPLAIN_PROMPT, SUMMARIZE_PROMPT, GUIDE_MODE_PROMPT
 from agent import run_agent_start, run_agent_step, stream_agent_step
 
 logging.basicConfig(
@@ -328,6 +333,134 @@ async def agent_step(request: AgentStepRequest):
         return await run_agent_step(request)
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.post("/summarize", response_model=SummarizeResponse)
+async def summarize(request: SummarizeRequest):
+    """
+    One-shot summarization mode.
+    Accepts a screenshot and/or visible page text and returns a plain-English summary
+    of what the user is currently looking at.
+    """
+    parts: list[str] = []
+    if request.page_url:
+        parts.append(f"Page URL: {request.page_url}")
+    if request.page_title:
+        parts.append(f"Page title: {request.page_title}")
+    if request.user_question:
+        parts.append(f"The user asked: {request.user_question}")
+    if request.page_text:
+        # Truncate to keep the prompt manageable; screenshots carry more info anyway.
+        trimmed = request.page_text[:8000].strip()
+        parts.append(f"\nVisible page text:\n{trimmed}")
+
+    user_text = "\n".join(parts) or "Please summarize what is visible on the current screen."
+
+    s = (request.screenshot or "").strip()
+    screenshot_b64 = s if len(s) >= MIN_SCREENSHOT_B64_CHARS else None
+
+    logger.info(
+        "summarize request: page_text_chars=%s has_screenshot=%s url_host=%s",
+        len(request.page_text or ""),
+        bool(screenshot_b64),
+        (request.page_url or "")[:80],
+    )
+
+    try:
+        raw = await call_ollama_multimodal(
+            SUMMARIZE_PROMPT,
+            user_text,
+            screenshot_b64=screenshot_b64,
+            expect_json=False,
+        )
+    except OllamaUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    summary = (raw or "").strip()
+    if not summary:
+        summary = "I couldn't read this page clearly. Please try again."
+
+    from ollama_client import get_active_model as _get_model
+    model = _get_model()
+    logger.info(
+        "summarize response: summary_chars=%s model=%s",
+        len(summary),
+        model,
+    )
+    return SummarizeResponse(summary=summary, model_used=model)
+
+
+@app.post("/guide", response_model=GuideModeResponse)
+async def guide_mode(request: GuideModeRequest):
+    """
+    Guide mode — identify the one element the user should interact with next.
+    Returns a plain-English instruction + CSS selector to highlight (no navigation/clicks).
+    """
+    parts: list[str] = []
+    if request.page_url:
+        parts.append(f"Page URL: {request.page_url}")
+    if request.page_title:
+        parts.append(f"Page title: {request.page_title}")
+    parts.append(f"User's goal: {request.user_question}")
+    if request.dom_summary:
+        parts.append(f"\nInteractive elements on this page:\n{request.dom_summary}")
+
+    user_text = "\n".join(parts)
+
+    s = (request.screenshot or "").strip()
+    screenshot_b64 = s if len(s) >= MIN_SCREENSHOT_B64_CHARS else None
+
+    dom_len = len(request.dom_summary or "")
+    logger.info(
+        "guide request: dom_summary_chars=%s has_screenshot=%s url_host=%s",
+        dom_len,
+        bool(screenshot_b64),
+        (request.page_url or "")[:80],
+    )
+
+    try:
+        raw = await call_ollama_multimodal(
+            GUIDE_MODE_PROMPT,
+            user_text,
+            screenshot_b64=screenshot_b64,
+            expect_json=True,
+        )
+    except OllamaUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    try:
+        parsed = extract_json(raw)
+    except Exception as exc:
+        logger.warning("guide parse failed: %s | raw=%s", exc, raw[:300])
+        raise HTTPException(status_code=502, detail="Model returned an unparseable response. Please try again.")
+
+    instruction = str(parsed.get("instruction") or "").strip()
+    if not instruction:
+        raise HTTPException(status_code=502, detail="Model returned an empty instruction.")
+
+    item_number = parsed.get("item_number")
+    if item_number is not None:
+        try:
+            item_number = int(item_number)
+        except (TypeError, ValueError):
+            item_number = None
+
+    from ollama_client import get_active_model as _get_model
+    resp = GuideModeResponse(
+        instruction=instruction,
+        item_number=item_number,
+        selector=parsed.get("selector") or None,
+        label=parsed.get("label") or None,
+        model_used=_get_model(),
+    )
+    logger.info(
+        "guide response: item_number=%s label_preview=%r selector_len=%s instruction_len=%s",
+        resp.item_number,
+        (resp.label or "")[:60],
+        len(resp.selector or ""),
+        len(resp.instruction or ""),
+    )
+    return resp
 
 
 @app.post("/agent/step/stream")

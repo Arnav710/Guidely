@@ -66,23 +66,112 @@ function clearHighlight() {
   if (_highlightTimer) { clearTimeout(_highlightTimer); _highlightTimer = null; }
 }
 
-function highlightElement(selector, label) {
-  clearHighlight();
-  if (!selector && !label) return;
+/** Visible enough for the user to notice the ring. */
+function _roughVisible(el) {
+  if (!el?.getBoundingClientRect) return false;
+  const r = el.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return false;
+  const s = window.getComputedStyle(el);
+  return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity) !== 0;
+}
 
-  // Try selector first, then label fuzzy match via the agent-loop's searchPage.
-  let el = null;
-  if (selector) {
-    try { el = document.querySelector(selector); } catch { /* bad CSS */ }
-  }
-  if (!el && label && _agentLoop) {
-    const results = _agentLoop.searchPage(label);
-    for (const m of results.matches.slice(0, 2)) {
-      try { el = document.querySelector(m.selector); if (el) break; } catch { /* ignore */ }
+/**
+ * If we matched a big container (LI/DIV/TD…), try to use the inner control that
+ * actually shows the label (e.g. Unsubscribe link inside a list row).
+ */
+function _refineHighlightNode(el, label) {
+  if (!el || !label) return el;
+  const want = String(label).toLowerCase().trim();
+  if (!want || want.length > 80) return el;
+  const tag = el.tagName?.toUpperCase();
+  if (!['LI', 'DIV', 'TD', 'TR', 'SECTION', 'ARTICLE'].includes(tag)) return el;
+  const innerPick = el.querySelectorAll('a, button, span, [role="button"], [role="link"]');
+  for (const node of innerPick) {
+    const t = (node.textContent || '').trim().toLowerCase();
+    if (!t) continue;
+    if (t === want || t.includes(want) || want.includes(t)) {
+      if (_roughVisible(node)) return node;
     }
   }
-  if (!el) return;
+  return el;
+}
 
+/** Long composite selectors sometimes fail after re-render; try embedded #id fragments. */
+function _querySelectorWithIdFallback(selector) {
+  if (!selector) return null;
+  try {
+    const el = document.querySelector(selector);
+    if (el) return el;
+  } catch (e) {
+    console.log('[Guidely highlight] querySelector threw', e?.message || e);
+  }
+  if (!selector.includes('#')) return null;
+  const idRe = /#[A-Za-z_][\w-]*/g;
+  let m;
+  while ((m = idRe.exec(selector)) !== null) {
+    const frag = m[0];
+    try {
+      const node = document.querySelector(frag);
+      if (node) return node;
+    } catch { /* invalid fragment */ }
+  }
+  return null;
+}
+
+function highlightElement(selector, label) {
+  clearHighlight();
+  if (!selector && !label) {
+    console.log('[Guidely highlight] skipped — no selector or label');
+    return;
+  }
+
+  let el = null;
+  let selectorError = null;
+  if (selector) {
+    try {
+      el = document.querySelector(selector);
+    } catch (e) {
+      selectorError = e?.message || String(e);
+    }
+    if (!el) el = _querySelectorWithIdFallback(selector);
+    if (!el && selector) {
+      console.warn('[Guidely highlight] querySelector returned null', {
+        selectorLen: selector.length,
+        selectorHead: selector.slice(0, 100),
+        parseError: selectorError,
+      });
+    }
+  }
+  if (!el && label && _agentLoop) {
+    const results = _agentLoop.searchPage(label, {
+      excludeGuidelySidebar: true,
+      preferActionTags: true,
+      maxMatches: 16,
+    });
+    console.log('[Guidely highlight] label fallback', {
+      label: String(label).slice(0, 80),
+      matchCount: results.matches?.length ?? 0,
+      topTags: results.matches?.slice(0, 4).map((x) => x.tag),
+    });
+    for (let i = 0; i < results.matches.length; i++) {
+      const m = results.matches[i];
+      try {
+        let candidate = document.querySelector(m.selector);
+        if (!candidate) continue;
+        candidate = _refineHighlightNode(candidate, label);
+        if (!_roughVisible(candidate)) continue;
+        el = candidate;
+        console.log('[Guidely highlight] fallback picked match', { index: i, tag: el.tagName });
+        break;
+      } catch { /* ignore */ }
+    }
+  }
+  if (!el) {
+    console.warn('[Guidely highlight] no element found — ring not shown');
+    return;
+  }
+
+  console.log('[Guidely highlight] ok', { tag: el.tagName, id: el.id || null });
   _highlightTarget = el;
   el.classList.add('guidely-ring');
   try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* ignore */ }
@@ -110,7 +199,7 @@ async function loadModules() {
 
 // ── User input handler ────────────────────────────────────────────────────────
 
-async function handleUserInput({ conversationId, text }) {
+async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
   clearHighlight();
 
   // Persist the user's message immediately so it appears in the thread.
@@ -124,7 +213,7 @@ async function handleUserInput({ conversationId, text }) {
 
   const session = await _store.getAgentSession(conversationId);
 
-  // Case 1: Agent is paused waiting for user input — resume with answer.
+  // Case 1: Agent is paused waiting for user input — always resume with answer regardless of mode.
   if (session?.status === 'paused' && session.pendingUserQuestion) {
     await _agentLoop.respondToUserQuestion(conversationId, displayText, _makeCallbacks(conversationId));
     return;
@@ -133,19 +222,30 @@ async function handleUserInput({ conversationId, text }) {
   // Case 2: Agent is already running (shouldn't normally reach here).
   if (session?.status === 'running') return;
 
-  // Case 3: Agent is idle (finished a task or waiting for clarification) — continue the conversation.
-  // This lets users answer follow-up questions or give additional context without starting fresh.
-  if (session?.status === 'idle' && session?.toolHistory?.length > 0) {
-    await _agentLoop.continueAgentLoop(conversationId, displayText, _makeCallbacks(conversationId));
-    return;
-  }
-
-  // Case 4: Fresh goal — start the agent loop.
   if (!displayText || displayText === '(What should I do here?)') {
     _sidebar.appendLiveMessage({ role: 'system', content: "Please tell me what you'd like help with." });
     return;
   }
 
+  // Case 3: Summarize mode — one-shot, no browsing.
+  if (mode === 'summarize') {
+    await _agentLoop.runSummarize(conversationId, displayText, _makeCallbacks(conversationId));
+    return;
+  }
+
+  // Case 4: Guide mode — highlight only, no clicking.
+  if (mode === 'guide') {
+    await _agentLoop.runGuideMode(conversationId, displayText, highlightElement, _makeCallbacks(conversationId));
+    return;
+  }
+
+  // Case 5: Agent is idle (finished a task) — continue conversation in autonomous mode.
+  if (session?.status === 'idle' && session?.toolHistory?.length > 0) {
+    await _agentLoop.continueAgentLoop(conversationId, displayText, _makeCallbacks(conversationId));
+    return;
+  }
+
+  // Case 6: Fresh autonomous goal — start the agent loop.
   await _agentLoop.startAgentLoop(conversationId, displayText, _makeCallbacks(conversationId));
 }
 
@@ -172,6 +272,30 @@ function _makeCallbacks(conversationId) {
       _sidebar.appendLiveMessage(message);
       // Persist asynchronously to chrome.storage.local.
       _store.appendMessage(conversationId, message).catch(() => {});
+    },
+    onActionChoice({ question, selector, label }) {
+      // Highlight the element immediately so the user can see what we're referring to.
+      if (selector || label) highlightElement(selector, label);
+
+      // Render the two-button choice card.
+      const { dismiss } = _sidebar.appendActionChoice({
+        question,
+        onChoice(choice) {
+          dismiss();
+          // Persist the assistant's question and user's implicit choice.
+          _store.appendMessage(conversationId, { role: 'assistant', content: question }).catch(() => {});
+          const choiceLabel = choice === 'do_it' ? 'Do it for me' : 'Show me where';
+          _store.appendMessage(conversationId, { role: 'user', content: choiceLabel }).catch(() => {});
+
+          if (choice === 'guide_me') clearHighlight();
+
+          _agentLoop.respondToActionChoice(
+            conversationId,
+            choice,
+            _makeCallbacks(conversationId),
+          );
+        },
+      });
     },
     onDone() {
       _sidebar.setAgentStatus('idle');
@@ -235,6 +359,18 @@ async function init() {
 
   const btn = getOrCreateButton();
   btn.addEventListener('click', () => _sidebar.open());
+
+  // One visible line so you know logging works — content-script logs only appear
+  // in this page's Console when that tab's DevTools is open (not extension popup).
+  console.log(
+    '%cGuidely%c · Debug logs are prefixed %c[Guidely …]%c — filter the Console by "Guidely". '
+    + 'Keep DevTools open on this tab (the site), not on chrome://extensions.',
+    'color:#fff;background:#FF6B35;font-weight:bold;padding:2px 8px;border-radius:4px',
+    'color:inherit',
+    'color:#FF6B35;font-weight:bold',
+    'color:#888',
+    { page: window.location.href.slice(0, 120) },
+  );
 }
 
 if (document.readyState === 'loading') {

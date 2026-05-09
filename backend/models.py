@@ -231,3 +231,93 @@ class AgentStepResponse(BaseModel):
     model_used: Optional[str] = None
     # Populated only when tool == "replan"; new steps to replace remaining steps.
     new_steps: Optional[List[dict]] = None
+
+
+# ── Summarize (one-shot mode) ─────────────────────────────────────────────────
+
+class SummarizeRequest(BaseModel):
+    """
+    Multimodal one-shot summarization request.
+    Either screenshot, page_text, or both must be provided.
+    """
+    screenshot: Optional[str] = Field(
+        None,
+        description="Base64 PNG of the visible tab. Recommended for visual documents.",
+    )
+    page_text: Optional[str] = Field(
+        None,
+        max_length=20000,
+        description="Extracted visible text from the page (document.body.innerText).",
+    )
+    page_url: Optional[str] = Field(None, max_length=2000)
+    page_title: Optional[str] = Field(None, max_length=500)
+    user_question: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="Optional specific question the user has about what they see.",
+    )
+
+    @field_validator("screenshot", mode="before")
+    @classmethod
+    def screenshot_str_or_none(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        return None
+
+    @field_validator("page_text", "page_url", "page_title", "user_question", mode="before")
+    @classmethod
+    def sanitize_unicode(cls, v: Any) -> Optional[str]:
+        return _strip_surrogates(v)
+
+
+class SummarizeResponse(BaseModel):
+    summary: str
+    model_used: Optional[str] = None
+
+
+# ── Guide mode (highlight-only mode) ─────────────────────────────────────────
+
+def _strip_surrogates(v: Any) -> Optional[str]:
+    """Remove lone surrogate characters that are invalid UTF-8."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        return None
+    return v.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
+
+
+class GuideModeRequest(BaseModel):
+    """
+    Guide mode: the user has asked 'what should I click?'
+    The model sees the screenshot + page structure and returns a selector to highlight.
+    No navigation, no form filling — pointer only.
+    """
+    screenshot: Optional[str] = Field(None)
+    page_url: Optional[str] = Field(None, max_length=2000)
+    page_title: Optional[str] = Field(None, max_length=500)
+    dom_summary: Optional[str] = Field(None, max_length=20000)
+    user_question: str = Field(..., max_length=500)
+
+    @field_validator("screenshot", mode="before")
+    @classmethod
+    def screenshot_str_or_none(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        return None
+
+    @field_validator("dom_summary", "page_url", "page_title", "user_question", mode="before")
+    @classmethod
+    def sanitize_unicode(cls, v: Any) -> Optional[str]:
+        return _strip_surrogates(v)
+
+
+class GuideModeResponse(BaseModel):
+    instruction: str
+    item_number: Optional[int] = None
+    selector: Optional[str] = None
+    label: Optional[str] = None
+    model_used: Optional[str] = None

@@ -509,6 +509,62 @@ async def stream_agent_call(
         raise OllamaUnavailableError(f"Ollama stream disconnected: {exc}")
 
 
+async def call_ollama_multimodal(
+    system_prompt: str,
+    user_text: str,
+    *,
+    screenshot_b64: Optional[str] = None,
+    model: Optional[str] = None,
+    expect_json: bool = True,
+) -> str:
+    """
+    Ollama call that optionally attaches a vision image.
+    Used for summarize and guide-mode endpoints.
+    Returns the raw response string.
+    """
+    global _active_model, _model_detected
+    if not _model_detected:
+        _active_model = await _detect_best_model()
+        _model_detected = True
+
+    chosen = model or _active_model
+    has_image = screenshot_usable(screenshot_b64)
+    options = dict(_OLLAMA_OPTIONS)
+    options["num_predict"] = 1024  # summaries can be longer
+
+    payload: dict[str, Any] = {
+        "model": chosen,
+        "system": system_prompt,
+        "prompt": user_text,
+        "stream": False,
+        "options": options,
+    }
+    if expect_json:
+        payload["format"] = "json"
+    if has_image:
+        payload["images"] = [screenshot_b64]
+
+    try:
+        async with httpx.AsyncClient(timeout=_OLLAMA_TIMEOUT) as client:
+            response = await client.post(OLLAMA_GENERATE_URL, json=payload)
+            response.raise_for_status()
+            body = response.json()
+    except httpx.ConnectError:
+        raise OllamaUnavailableError("Ollama is not running at localhost:11434")
+    except httpx.ReadTimeout:
+        raise OllamaUnavailableError("Ollama timed out generating a response")
+    except httpx.RemoteProtocolError as exc:
+        raise OllamaUnavailableError(f"Ollama disconnected unexpectedly: {exc}")
+    except httpx.HTTPStatusError as exc:
+        raise OllamaUnavailableError(f"Ollama returned HTTP {exc.response.status_code}")
+
+    err_msg = _ollama_generate_error_message(body)
+    if err_msg:
+        raise OllamaUnavailableError(f"Ollama could not run the model: {err_msg}")
+
+    return body.get("response") or ""
+
+
 async def call_ollama_text(
     system_prompt: str,
     user_text: str,

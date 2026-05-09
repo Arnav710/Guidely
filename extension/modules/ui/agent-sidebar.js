@@ -15,6 +15,7 @@ import {
   renderThread,
   appendMessage as appendThreadMessage,
   appendToolCallBubble,
+  appendActionChoice as appendActionChoiceBubble,
   showThinking,
   showStreamingThought,
 } from './chat-thread.js';
@@ -345,6 +346,36 @@ const SIDEBAR_CSS = `
     color: #27ae60;
   }
 
+  /* ── Action choice card (ask_action) ── */
+  .g-action-choice { gap: 0; padding: 0 !important; overflow: hidden; }
+  .g-action-question {
+    margin: 0;
+    padding: 12px 14px 10px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #222;
+  }
+  .g-action-btns {
+    display: flex;
+    border-top: 1px solid #e8e8e8;
+  }
+  .g-action-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    padding: 11px 10px;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+    color: #333;
+  }
+  .g-action-btn:hover { background: #f5f5f5; }
+  .g-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .g-action-do { border-right: 1px solid #e8e8e8; color: #27ae60; }
+  .g-action-guide { color: #FF6B35; }
+
   /* ── Composer ── */
   #g-composer {
     flex-shrink: 0;
@@ -369,7 +400,7 @@ const SIDEBAR_CSS = `
   #g-textarea:focus { outline: none; border-color: #FF6B35; box-shadow: 0 0 0 3px rgba(255,107,53,0.12); }
   #g-textarea:disabled { background: #f5f5f5; color: #999; }
   #g-send {
-    padding: 10px 18px;
+    padding: 10px 16px;
     font-size: 14px;
     font-weight: 600;
     color: #fff;
@@ -380,10 +411,46 @@ const SIDEBAR_CSS = `
     font-family: inherit;
     white-space: nowrap;
     transition: background 0.15s;
+    align-self: flex-end;
   }
   #g-send:hover:not(:disabled) { background: #e05a28; }
   #g-send:disabled { background: #ccc; cursor: not-allowed; }
-  .g-hint { font-size: 11px; color: #bbb; margin: 6px 0 0; text-align: right; }
+
+  .g-mode-btns {
+    display: flex;
+    gap: 6px;
+    margin-top: 7px;
+  }
+  .g-mode-btn {
+    flex: 1;
+    padding: 7px 5px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #666;
+    background: #f5f5f5;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 10px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+    line-height: 1.3;
+    text-align: center;
+  }
+  .g-mode-btn:hover:not(:disabled):not(.g-mode-active) {
+    background: #fff2ed;
+    border-color: #FF6B35;
+    color: #FF6B35;
+  }
+  .g-mode-btn.g-mode-active {
+    background: #FF6B35;
+    color: #fff;
+    border-color: #FF6B35;
+  }
+  .g-mode-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .g-hint { font-size: 11px; color: #bbb; margin: 5px 0 0; text-align: right; }
 
   /* ── Close button ── */
   #g-close {
@@ -478,15 +545,15 @@ export async function mountSidebar({ onSubmit } = {}) {
   if (!active) active = await store.createConversation();
   _activeConvId = active.id;
 
-  // Mount simplified composer (no mode/autonomy selector).
+  // Mount composer with three mode buttons.
   const composerRoot = sidebar.querySelector('#g-composer');
   _composerCtl = mountComposer(composerRoot, {
-    onSend: async (text) => {
+    onSend: async ({ text, mode } = {}) => {
       const curActive = await store.getActive();
       if (!curActive) return;
       _composerCtl.setDisabled(true);
       try {
-        await onSubmit?.({ conversationId: curActive.id, text });
+        await onSubmit?.({ conversationId: curActive.id, text, mode: mode || 'autonomous' });
       } finally {
         _composerCtl.setDisabled(false);
         _composerCtl.focus();
@@ -536,6 +603,14 @@ export async function mountSidebar({ onSubmit } = {}) {
      */
     appendToolCall({ tool, display }) {
       return appendToolCallBubble(sidebar.querySelector('#g-thread'), { tool, display });
+    },
+
+    /**
+     * Show an ask_action choice card with "Do it for me" / "Show me where" buttons.
+     * Returns { dismiss } to remove the card once the user picks.
+     */
+    appendActionChoice({ question, onChoice }) {
+      return appendActionChoiceBubble(sidebar.querySelector('#g-thread'), { question, onChoice });
     },
 
     /**

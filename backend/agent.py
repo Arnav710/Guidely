@@ -324,6 +324,13 @@ async def run_agent_start(request: AgentStartRequest) -> AgentStartResponse:
         parts.append(f"Page title: {request.page_title}")
     if request.dom_summary:
         parts.append(f"Visible page elements: {request.dom_summary}")
+    # Explicit signal so the model doesn't ask for context that's already on screen.
+    if request.page_url or request.page_title:
+        parts.append(
+            "NOTE: The user is already on this page. "
+            "If the goal can be addressed using the content visible on this page, "
+            "do NOT ask for clarification — set needs_clarification = false and plan directly."
+        )
 
     user_text = "\n".join(parts)
     raw = await call_ollama_text(AGENT_PLAN_PROMPT, user_text)
