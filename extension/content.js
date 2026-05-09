@@ -66,14 +66,65 @@ function clearHighlight() {
   if (_highlightTimer) { clearTimeout(_highlightTimer); _highlightTimer = null; }
 }
 
+/** Visible enough for the user to notice the ring. */
+function _roughVisible(el) {
+  if (!el?.getBoundingClientRect) return false;
+  const r = el.getBoundingClientRect();
+  if (r.width < 1 || r.height < 1) return false;
+  const s = window.getComputedStyle(el);
+  return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity) !== 0;
+}
+
+/**
+ * If we matched a big container (LI/DIV/TD…), try to use the inner control that
+ * actually shows the label (e.g. Unsubscribe link inside a list row).
+ */
+function _refineHighlightNode(el, label) {
+  if (!el || !label) return el;
+  const want = String(label).toLowerCase().trim();
+  if (!want || want.length > 80) return el;
+  const tag = el.tagName?.toUpperCase();
+  if (!['LI', 'DIV', 'TD', 'TR', 'SECTION', 'ARTICLE'].includes(tag)) return el;
+  const innerPick = el.querySelectorAll('a, button, span, [role="button"], [role="link"]');
+  for (const node of innerPick) {
+    const t = (node.textContent || '').trim().toLowerCase();
+    if (!t) continue;
+    if (t === want || t.includes(want) || want.includes(t)) {
+      if (_roughVisible(node)) return node;
+    }
+  }
+  return el;
+}
+
+/** Long composite selectors sometimes fail after re-render; try embedded #id fragments. */
+function _querySelectorWithIdFallback(selector) {
+  if (!selector) return null;
+  try {
+    const el = document.querySelector(selector);
+    if (el) return el;
+  } catch (e) {
+    console.log('[Guidely highlight] querySelector threw', e?.message || e);
+  }
+  if (!selector.includes('#')) return null;
+  const idRe = /#[A-Za-z_][\w-]*/g;
+  let m;
+  while ((m = idRe.exec(selector)) !== null) {
+    const frag = m[0];
+    try {
+      const node = document.querySelector(frag);
+      if (node) return node;
+    } catch { /* invalid fragment */ }
+  }
+  return null;
+}
+
 function highlightElement(selector, label) {
   clearHighlight();
   if (!selector && !label) {
-    console.info('[Guidely highlight] skipped — no selector or label');
+    console.log('[Guidely highlight] skipped — no selector or label');
     return;
   }
 
-  // Try selector first, then label fuzzy match via the agent-loop's searchPage.
   let el = null;
   let selectorError = null;
   if (selector) {
@@ -82,6 +133,7 @@ function highlightElement(selector, label) {
     } catch (e) {
       selectorError = e?.message || String(e);
     }
+    if (!el) el = _querySelectorWithIdFallback(selector);
     if (!el && selector) {
       console.warn('[Guidely highlight] querySelector returned null', {
         selectorLen: selector.length,
@@ -91,13 +143,27 @@ function highlightElement(selector, label) {
     }
   }
   if (!el && label && _agentLoop) {
-    const results = _agentLoop.searchPage(label);
-    console.info('[Guidely highlight] label fallback', {
+    const results = _agentLoop.searchPage(label, {
+      excludeGuidelySidebar: true,
+      preferActionTags: true,
+      maxMatches: 16,
+    });
+    console.log('[Guidely highlight] label fallback', {
       label: String(label).slice(0, 80),
       matchCount: results.matches?.length ?? 0,
+      topTags: results.matches?.slice(0, 4).map((x) => x.tag),
     });
-    for (const m of results.matches.slice(0, 2)) {
-      try { el = document.querySelector(m.selector); if (el) break; } catch { /* ignore */ }
+    for (let i = 0; i < results.matches.length; i++) {
+      const m = results.matches[i];
+      try {
+        let candidate = document.querySelector(m.selector);
+        if (!candidate) continue;
+        candidate = _refineHighlightNode(candidate, label);
+        if (!_roughVisible(candidate)) continue;
+        el = candidate;
+        console.log('[Guidely highlight] fallback picked match', { index: i, tag: el.tagName });
+        break;
+      } catch { /* ignore */ }
     }
   }
   if (!el) {
@@ -105,7 +171,7 @@ function highlightElement(selector, label) {
     return;
   }
 
-  console.info('[Guidely highlight] ok', { tag: el.tagName, id: el.id || null });
+  console.log('[Guidely highlight] ok', { tag: el.tagName, id: el.id || null });
   _highlightTarget = el;
   el.classList.add('guidely-ring');
   try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* ignore */ }
@@ -293,6 +359,18 @@ async function init() {
 
   const btn = getOrCreateButton();
   btn.addEventListener('click', () => _sidebar.open());
+
+  // One visible line so you know logging works — content-script logs only appear
+  // in this page's Console when that tab's DevTools is open (not extension popup).
+  console.log(
+    '%cGuidely%c · Debug logs are prefixed %c[Guidely …]%c — filter the Console by "Guidely". '
+    + 'Keep DevTools open on this tab (the site), not on chrome://extensions.',
+    'color:#fff;background:#FF6B35;font-weight:bold;padding:2px 8px;border-radius:4px',
+    'color:inherit',
+    'color:#FF6B35;font-weight:bold',
+    'color:#888',
+    { page: window.location.href.slice(0, 120) },
+  );
 }
 
 if (document.readyState === 'loading') {

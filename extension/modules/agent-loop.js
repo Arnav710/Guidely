@@ -15,9 +15,12 @@
  *   resumeAgentLoop(conversationId, callbacks)
  *   respondToUserQuestion(conversationId, answer, callbacks)
  *
- * Debug: Open DevTools Console on the page. Logs are prefixed [Guidely …].
- * Extra detail: set window.__GUIDELY_DEBUG__ = true then reload (verbose dom_map /
- * selector snippets in guide mode).
+ * Debug: Open DevTools (F12 or Cmd+Opt+I) while the **website tab** is focused
+ * (e.g. Gmail) — not the extension popup, not chrome://extensions. In Console,
+ * keep default levels on (especially "Verbose" / all levels) and filter by: Guidely
+ *
+ * Extra detail: set window.__GUIDELY_DEBUG__ = true then reload for verbose dom_map /
+ * selector snippets in guide mode.
  */
 
 import * as store from './conversation-store.js';
@@ -36,14 +39,15 @@ const SECTION_ATTR = 'data-guidely-section';
  */
 function _guidelyLog(tag, data = {}) {
   try {
-    console.info(`[Guidely ${tag}]`, data);
+    // Use console.log — many users disable "Info" in DevTools, which hides console.info.
+    console.log(`[Guidely ${tag}]`, data);
   } catch { /* ignore */ }
 }
 
 function _guidelyLogVerbose(tag, data = {}) {
   try {
     if (typeof window !== 'undefined' && window.__GUIDELY_DEBUG__) {
-      console.info(`[Guidely ${tag}:verbose]`, data);
+      console.log(`[Guidely ${tag}:verbose]`, data);
     }
   } catch { /* ignore */ }
 }
@@ -215,11 +219,32 @@ function _extractElements(containerEl, sectionId) {
   return { type: 'elements', section_id: sectionId, elements };
 }
 
+/** Higher rank = more desirable target for clicks/highlights. */
+function _highlightTagRank(tag) {
+  const t = String(tag || '').toLowerCase();
+  if (t === 'a' || t === 'button') return 40;
+  if (t === 'span') return 25;
+  if (t === 'input' || t === 'select' || t === 'textarea') return 20;
+  if (t === 'label') return 15;
+  if (t === 'li') return 0;
+  return 10;
+}
+
 // ── Fuzzy page search (fast locate without knowing section) ───────────────────
 
-export function searchPage(query) {
+/**
+ * @param {string} query
+ * @param {{ excludeGuidelySidebar?: boolean, preferActionTags?: boolean, maxMatches?: number }} [options]
+ */
+export function searchPage(query, options = {}) {
   const q = String(query || '').toLowerCase().trim();
   if (!q) return { type: 'search', query, matches: [] };
+
+  const {
+    excludeGuidelySidebar = true,
+    preferActionTags = false,
+    maxMatches = 8,
+  } = options;
 
   // Search across interactive elements AND text nodes (headings, labels, paragraphs).
   const SEARCHABLE = [
@@ -230,11 +255,13 @@ export function searchPage(query) {
   let candidates = [];
   try { candidates = Array.from(document.querySelectorAll(SEARCHABLE)); } catch { /* ignore */ }
 
+  const sidebar = excludeGuidelySidebar ? document.getElementById('g-sidebar') : null;
   const matches = [];
 
   for (const el of candidates) {
-    if (matches.length >= 8) break;
     try {
+      if (sidebar && sidebar.contains(el)) continue;
+
       const text = (
         el.getAttribute('aria-label') ||
         el.textContent ||
@@ -260,10 +287,18 @@ export function searchPage(query) {
         context,
       });
     } catch { /* skip */ }
+    if (matches.length >= 200) break;
   }
 
-  matches.sort((a, b) => b.score - a.score);
-  return { type: 'search', query, matches: matches.slice(0, 8) };
+  matches.sort((a, b) => {
+    const ta = preferActionTags ? _highlightTagRank(a.tag) : 0;
+    const tb = preferActionTags ? _highlightTagRank(b.tag) : 0;
+    const sa = a.score * 100 + ta;
+    const sb = b.score * 100 + tb;
+    return sb - sa;
+  });
+
+  return { type: 'search', query, matches: matches.slice(0, maxMatches) };
 }
 
 function _fuzzyScore(text, query) {
