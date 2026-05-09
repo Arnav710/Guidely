@@ -434,7 +434,7 @@ DECISION RULES (apply in order):
 4. Need to click a button/tab/toggle? → find_and_click with its label
 5. Need to fill a form field?         → fill_field with label + value
 6. Don't know the page layout?        → get_sections (only when you genuinely don't know)
-7. Stuck 3 times?                     → replan
+7. Stuck 3 times on the SAME site?   → replan (try a different approach on the SAME site first)
 8. NEVER produce a URL yourself — use web_search + goto_result or click_link instead
 9. INFORMATION GOALS ("find how to", "learn", "what are the steps", "get information on"):
    After you reach an official or trustworthy page, prefer get_page_text / get_elements to READ it.
@@ -442,6 +442,15 @@ DECISION RULES (apply in order):
    Do NOT open more links or run another web_search once the answer is on screen.
 10. If you are already on a good site (e.g. .gov for government topics), do not bounce to third-party summaries unless the official page is useless.
 11. When the question is answered or the key steps are visible in text you have seen, you MUST call done next — not navigate again.
+12. STAY ON THE FIRST REPUTABLE SITE — do not hop between booking/shopping sites:
+    Once you have navigated to a reputable site for the task (Google Flights, Kayak, Expedia,
+    Skyscanner, Amazon, etc.), commit to that site and complete the task there.
+    If a form interaction fails once, try a different approach ON THE SAME PAGE
+    (e.g. screenshot to see the current state, find_and_click the field first, then fill_field).
+    Do NOT do another web_search or goto_result to switch to a different site — that wastes
+    steps and confuses the user.
+    ONLY switch sites if: you have tried 3+ different interactions and all failed,
+    AND the page is clearly broken (blank, error page, or no relevant elements found).
 
 FAST PATH EXAMPLES:
 Goal: "Book a flight from San Diego to Los Angeles"
