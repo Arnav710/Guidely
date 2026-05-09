@@ -688,10 +688,11 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
 
   const { screenshot, sections } = await _autoCapture();
 
-  // Build a flat element list from every section so the model has real CSS
-  // selectors to choose from — same data the autonomous agent uses for clicking.
+  // Build a flat element list from every section.
   // Exclude Guidely's own sidebar elements (they live inside #g-sidebar).
   const sidebarEl = document.getElementById('g-sidebar');
+  // selectorMap: index (1-based) → full original selector, used for highlighting.
+  const selectorMap = {};
   const allElements = [];
   for (const sec of (sections?.sections || [])) {
     const secElements = getElementsInSection(sec.id);
@@ -706,18 +707,22 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
       const safeSelector = (el.selector || '').replace(/[\uD800-\uDFFF]/g, '');
       // Skip unlabelled links (label is literally "a") — not useful to the model.
       if (!safeLabel || safeLabel === 'a') continue;
-      // Truncate very deep CSS paths — keep first 120 chars which include ID/class anchors.
-      const shortSelector = safeSelector.length > 120 ? safeSelector.slice(0, 120) : safeSelector;
-      allElements.push({ ...el, label: safeLabel, selector: shortSelector });
+      const idx = allElements.length + 1;
+      // Store the FULL selector locally for highlighting.
+      selectorMap[idx] = safeSelector;
+      // Send the model only a short display selector (ID/class prefix ≤80 chars) to keep
+      // the prompt compact — the model picks by index, not by reproducing the full path.
+      const displaySelector = safeSelector.length > 80 ? safeSelector.slice(0, 80) + '…' : safeSelector;
+      allElements.push({ tag: el.tag, label: safeLabel, selector: displaySelector, idx });
       if (allElements.length >= 60) break;
     }
     if (allElements.length >= 60) break;
   }
 
-  // Format as a numbered list so the model can reference items by selector.
+  // Format as a numbered list. Model is asked to reply with the item number.
   const domMap = allElements.length > 0
-    ? allElements.map((el, i) =>
-        `${i + 1}. [${el.tag}] "${el.label}" \u2014 selector: ${el.selector}`
+    ? allElements.map((el) =>
+        `${el.idx}. [${el.tag}] "${el.label}" — selector: ${el.selector}`
       ).join('\n')
     : '(no interactive elements found)';
 
@@ -733,9 +738,19 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
     const instruction = result?.instruction || 'I couldn\'t identify the right element. Please try again.';
     onMessage?.({ role: 'assistant', content: instruction });
 
-    // Highlight the identified element.
-    if (highlightFn && (result?.selector || result?.label)) {
-      highlightFn(result.selector || null, result.label || null);
+    // Resolve the selector: prefer looking up the full selector from selectorMap
+    // using the item number the model returned, fall back to the model's raw selector,
+    // then fall back to a label-based fuzzy search in highlightFn.
+    let resolvedSelector = null;
+    if (result?.item_number && selectorMap[result.item_number]) {
+      resolvedSelector = selectorMap[result.item_number];
+    } else if (result?.selector) {
+      // Try the model's selector directly (works when it's an ID like #avWBGd-9).
+      resolvedSelector = result.selector;
+    }
+
+    if (highlightFn && (resolvedSelector || result?.label)) {
+      highlightFn(resolvedSelector, result?.label || null);
     }
   } catch (err) {
     onError?.(`Couldn't identify element: ${err.message}`);

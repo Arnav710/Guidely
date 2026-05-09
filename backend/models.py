@@ -317,6 +317,7 @@ class GuideModeRequest(BaseModel):
 
 class GuideModeResponse(BaseModel):
     instruction: str
+    item_number: Optional[int] = None
     selector: Optional[str] = None
     label: Optional[str] = None
     model_used: Optional[str] = None

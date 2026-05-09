@@ -417,9 +417,17 @@ async def guide_mode(request: GuideModeRequest):
     if not instruction:
         raise HTTPException(status_code=502, detail="Model returned an empty instruction.")
 
+    item_number = parsed.get("item_number")
+    if item_number is not None:
+        try:
+            item_number = int(item_number)
+        except (TypeError, ValueError):
+            item_number = None
+
     from ollama_client import get_active_model as _get_model
     return GuideModeResponse(
         instruction=instruction,
+        item_number=item_number,
         selector=parsed.get("selector") or None,
         label=parsed.get("label") or None,
         model_used=_get_model(),
