@@ -847,7 +847,8 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
     });
 
     if (highlightFn && (resolvedSelector || result?.label)) {
-      highlightFn(resolvedSelector, result?.label || null);
+      // Longer pulse for guide mode so users can find the control (onDone no longer clears it).
+      highlightFn(resolvedSelector, result?.label || null, { durationMs: 90000 });
     } else {
       _guidelyLog('guide:highlight_skipped', {
         hasHighlightFn: !!highlightFn,
@@ -864,7 +865,7 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
   }
 
   await store.setAgentStatus(conversationId, 'idle');
-  onDone?.();
+  onDone?.({ keepHighlight: true });
 }
 
 /**
