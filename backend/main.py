@@ -359,6 +359,13 @@ async def summarize(request: SummarizeRequest):
     s = (request.screenshot or "").strip()
     screenshot_b64 = s if len(s) >= MIN_SCREENSHOT_B64_CHARS else None
 
+    logger.info(
+        "summarize request: page_text_chars=%s has_screenshot=%s url_host=%s",
+        len(request.page_text or ""),
+        bool(screenshot_b64),
+        (request.page_url or "")[:80],
+    )
+
     try:
         raw = await call_ollama_multimodal(
             SUMMARIZE_PROMPT,
@@ -374,7 +381,13 @@ async def summarize(request: SummarizeRequest):
         summary = "I couldn't read this page clearly. Please try again."
 
     from ollama_client import get_active_model as _get_model
-    return SummarizeResponse(summary=summary, model_used=_get_model())
+    model = _get_model()
+    logger.info(
+        "summarize response: summary_chars=%s model=%s",
+        len(summary),
+        model,
+    )
+    return SummarizeResponse(summary=summary, model_used=model)
 
 
 @app.post("/guide", response_model=GuideModeResponse)
@@ -396,6 +409,14 @@ async def guide_mode(request: GuideModeRequest):
 
     s = (request.screenshot or "").strip()
     screenshot_b64 = s if len(s) >= MIN_SCREENSHOT_B64_CHARS else None
+
+    dom_len = len(request.dom_summary or "")
+    logger.info(
+        "guide request: dom_summary_chars=%s has_screenshot=%s url_host=%s",
+        dom_len,
+        bool(screenshot_b64),
+        (request.page_url or "")[:80],
+    )
 
     try:
         raw = await call_ollama_multimodal(
@@ -425,13 +446,21 @@ async def guide_mode(request: GuideModeRequest):
             item_number = None
 
     from ollama_client import get_active_model as _get_model
-    return GuideModeResponse(
+    resp = GuideModeResponse(
         instruction=instruction,
         item_number=item_number,
         selector=parsed.get("selector") or None,
         label=parsed.get("label") or None,
         model_used=_get_model(),
     )
+    logger.info(
+        "guide response: item_number=%s label_preview=%r selector_len=%s instruction_len=%s",
+        resp.item_number,
+        (resp.label or "")[:60],
+        len(resp.selector or ""),
+        len(resp.instruction or ""),
+    )
+    return resp
 
 
 @app.post("/agent/step/stream")

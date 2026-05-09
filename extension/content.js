@@ -68,21 +68,44 @@ function clearHighlight() {
 
 function highlightElement(selector, label) {
   clearHighlight();
-  if (!selector && !label) return;
+  if (!selector && !label) {
+    console.info('[Guidely highlight] skipped — no selector or label');
+    return;
+  }
 
   // Try selector first, then label fuzzy match via the agent-loop's searchPage.
   let el = null;
+  let selectorError = null;
   if (selector) {
-    try { el = document.querySelector(selector); } catch { /* bad CSS */ }
+    try {
+      el = document.querySelector(selector);
+    } catch (e) {
+      selectorError = e?.message || String(e);
+    }
+    if (!el && selector) {
+      console.warn('[Guidely highlight] querySelector returned null', {
+        selectorLen: selector.length,
+        selectorHead: selector.slice(0, 100),
+        parseError: selectorError,
+      });
+    }
   }
   if (!el && label && _agentLoop) {
     const results = _agentLoop.searchPage(label);
+    console.info('[Guidely highlight] label fallback', {
+      label: String(label).slice(0, 80),
+      matchCount: results.matches?.length ?? 0,
+    });
     for (const m of results.matches.slice(0, 2)) {
       try { el = document.querySelector(m.selector); if (el) break; } catch { /* ignore */ }
     }
   }
-  if (!el) return;
+  if (!el) {
+    console.warn('[Guidely highlight] no element found — ring not shown');
+    return;
+  }
 
+  console.info('[Guidely highlight] ok', { tag: el.tagName, id: el.id || null });
   _highlightTarget = el;
   el.classList.add('guidely-ring');
   try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* ignore */ }

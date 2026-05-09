@@ -14,6 +14,10 @@
  *   startAgentLoop(conversationId, goal, callbacks)
  *   resumeAgentLoop(conversationId, callbacks)
  *   respondToUserQuestion(conversationId, answer, callbacks)
+ *
+ * Debug: Open DevTools Console on the page. Logs are prefixed [Guidely …].
+ * Extra detail: set window.__GUIDELY_DEBUG__ = true then reload (verbose dom_map /
+ * selector snippets in guide mode).
  */
 
 import * as store from './conversation-store.js';
@@ -25,6 +29,24 @@ const MAX_LOOP_CALLS = 24;
 
 // Attribute injected on semantic landmark elements so we can find them by ID.
 const SECTION_ATTR = 'data-guidely-section';
+
+/**
+ * Debug logging — always logs concise milestones. Set window.__GUIDELY_DEBUG__ = true
+ * in the page DevTools console for verbose dumps (e.g. first lines of dom_map).
+ */
+function _guidelyLog(tag, data = {}) {
+  try {
+    console.info(`[Guidely ${tag}]`, data);
+  } catch { /* ignore */ }
+}
+
+function _guidelyLogVerbose(tag, data = {}) {
+  try {
+    if (typeof window !== 'undefined' && window.__GUIDELY_DEBUG__) {
+      console.info(`[Guidely ${tag}:verbose]`, data);
+    }
+  } catch { /* ignore */ }
+}
 
 // Module-level flag: only one loop runs at a time per content-script context.
 let _loopRunning = false;
@@ -645,6 +667,13 @@ export async function runSummarize(conversationId, userQuestion, callbacks = {})
     .replace(/[\uD800-\uDFFF]/g, '')
     .slice(0, 8000);
 
+  _guidelyLog('summarize', {
+    conversationId,
+    pageTextChars: pageText.length,
+    screenshotB64Chars: (screenshot || '').length,
+    questionPreview: String(userQuestion || '').slice(0, 120),
+  });
+
   try {
     const result = await summarizePage({
       screenshot,
@@ -654,8 +683,13 @@ export async function runSummarize(conversationId, userQuestion, callbacks = {})
       userQuestion,
     });
     const summary = result?.summary || 'I couldn\'t read this page clearly. Please try again.';
+    _guidelyLog('summarize:ok', {
+      summaryChars: summary.length,
+      model: result?.model_used ?? null,
+    });
     onMessage?.({ role: 'assistant', content: summary });
   } catch (err) {
+    _guidelyLog('summarize:error', { message: err?.message || String(err) });
     onError?.(`Couldn't summarize: ${err.message}`);
     await store.setAgentStatus(conversationId, 'error');
     onStatusChange?.('error');
@@ -726,6 +760,18 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
       ).join('\n')
     : '(no interactive elements found)';
 
+  _guidelyLog('guide:prepare', {
+    conversationId,
+    sectionCount: (sections?.sections || []).length,
+    candidateElements: allElements.length,
+    domMapChars: domMap.length,
+    screenshotB64Chars: (screenshot || '').length,
+    questionPreview: String(userQuestion || '').slice(0, 120),
+  });
+  _guidelyLogVerbose('guide:dom_map', {
+    head: domMap.slice(0, 1200),
+  });
+
   try {
     const result = await guideMode({
       screenshot,
@@ -742,17 +788,40 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
     // using the item number the model returned, fall back to the model's raw selector,
     // then fall back to a label-based fuzzy search in highlightFn.
     let resolvedSelector = null;
+    let resolveSource = 'none';
     if (result?.item_number && selectorMap[result.item_number]) {
       resolvedSelector = selectorMap[result.item_number];
+      resolveSource = 'item_number_map';
     } else if (result?.selector) {
       // Try the model's selector directly (works when it's an ID like #avWBGd-9).
       resolvedSelector = result.selector;
+      resolveSource = 'model_selector';
     }
+
+    _guidelyLog('guide:response', {
+      item_number: result?.item_number ?? null,
+      label: result?.label ? String(result.label).slice(0, 80) : null,
+      modelSelectorChars: result?.selector ? String(result.selector).length : 0,
+      resolvedSelectorChars: resolvedSelector ? resolvedSelector.length : 0,
+      resolveSource,
+      mapHasItem: !!(result?.item_number && selectorMap[result.item_number]),
+    });
+    _guidelyLogVerbose('guide:selectors', {
+      modelSelector: result?.selector || null,
+      resolvedHead: resolvedSelector ? resolvedSelector.slice(0, 200) : null,
+    });
 
     if (highlightFn && (resolvedSelector || result?.label)) {
       highlightFn(resolvedSelector, result?.label || null);
+    } else {
+      _guidelyLog('guide:highlight_skipped', {
+        hasHighlightFn: !!highlightFn,
+        hasResolved: !!resolvedSelector,
+        hasLabel: !!result?.label,
+      });
     }
   } catch (err) {
+    _guidelyLog('guide:error', { message: err?.message || String(err) });
     onError?.(`Couldn't identify element: ${err.message}`);
     await store.setAgentStatus(conversationId, 'error');
     onStatusChange?.('error');
