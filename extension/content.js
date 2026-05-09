@@ -173,6 +173,30 @@ function _makeCallbacks(conversationId) {
       // Persist asynchronously to chrome.storage.local.
       _store.appendMessage(conversationId, message).catch(() => {});
     },
+    onActionChoice({ question, selector, label }) {
+      // Highlight the element immediately so the user can see what we're referring to.
+      if (selector || label) highlightElement(selector, label);
+
+      // Render the two-button choice card.
+      const { dismiss } = _sidebar.appendActionChoice({
+        question,
+        onChoice(choice) {
+          dismiss();
+          // Persist the assistant's question and user's implicit choice.
+          _store.appendMessage(conversationId, { role: 'assistant', content: question }).catch(() => {});
+          const choiceLabel = choice === 'do_it' ? 'Do it for me' : 'Show me where';
+          _store.appendMessage(conversationId, { role: 'user', content: choiceLabel }).catch(() => {});
+
+          if (choice === 'guide_me') clearHighlight();
+
+          _agentLoop.respondToActionChoice(
+            conversationId,
+            choice,
+            _makeCallbacks(conversationId),
+          );
+        },
+      });
+    },
     onDone() {
       _sidebar.setAgentStatus('idle');
       clearHighlight();

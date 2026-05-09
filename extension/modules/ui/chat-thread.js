@@ -157,6 +157,43 @@ export function showStreamingThought(rootEl) {
   };
 }
 
+/**
+ * Render an ask_action choice card: assistant question text + two buttons.
+ *
+ * Returns { dismiss } so the caller can remove the card once the user picks.
+ *
+ * onChoice(choice) is called with 'do_it' or 'guide_me'.
+ */
+export function appendActionChoice(rootEl, { question, onChoice }) {
+  if (!rootEl) return { dismiss() {} };
+
+  const card = document.createElement('div');
+  card.className = 'g-msg g-msg-assistant g-action-choice';
+  card.innerHTML = `
+    <p class="g-action-question">${esc(question)}</p>
+    <div class="g-action-btns">
+      <button class="g-action-btn g-action-do" data-choice="do_it">✅ Do it for me</button>
+      <button class="g-action-btn g-action-guide" data-choice="guide_me">👆 Show me where</button>
+    </div>
+  `;
+
+  card.querySelectorAll('.g-action-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const choice = btn.getAttribute('data-choice');
+      // Disable both buttons immediately to prevent double-tap.
+      card.querySelectorAll('.g-action-btn').forEach((b) => { b.disabled = true; });
+      onChoice?.(choice);
+    });
+  });
+
+  rootEl.appendChild(card);
+  rootEl.scrollTop = rootEl.scrollHeight;
+
+  return {
+    dismiss() { card.remove(); },
+  };
+}
+
 function _makeBubble(msg) {
   const div = document.createElement('div');
   div.className = `g-msg ${ROLE_CLASS[msg.role] ?? 'g-msg-assistant'}`;

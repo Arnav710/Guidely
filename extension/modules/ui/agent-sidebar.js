@@ -15,6 +15,7 @@ import {
   renderThread,
   appendMessage as appendThreadMessage,
   appendToolCallBubble,
+  appendActionChoice as appendActionChoiceBubble,
   showThinking,
   showStreamingThought,
 } from './chat-thread.js';
@@ -345,6 +346,36 @@ const SIDEBAR_CSS = `
     color: #27ae60;
   }
 
+  /* ── Action choice card (ask_action) ── */
+  .g-action-choice { gap: 0; padding: 0 !important; overflow: hidden; }
+  .g-action-question {
+    margin: 0;
+    padding: 12px 14px 10px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #222;
+  }
+  .g-action-btns {
+    display: flex;
+    border-top: 1px solid #e8e8e8;
+  }
+  .g-action-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    padding: 11px 10px;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+    color: #333;
+  }
+  .g-action-btn:hover { background: #f5f5f5; }
+  .g-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .g-action-do { border-right: 1px solid #e8e8e8; color: #27ae60; }
+  .g-action-guide { color: #FF6B35; }
+
   /* ── Composer ── */
   #g-composer {
     flex-shrink: 0;
@@ -536,6 +567,14 @@ export async function mountSidebar({ onSubmit } = {}) {
      */
     appendToolCall({ tool, display }) {
       return appendToolCallBubble(sidebar.querySelector('#g-thread'), { tool, display });
+    },
+
+    /**
+     * Show an ask_action choice card with "Do it for me" / "Show me where" buttons.
+     * Returns { dismiss } to remove the card once the user picks.
+     */
+    appendActionChoice({ question, onChoice }) {
+      return appendActionChoiceBubble(sidebar.querySelector('#g-thread'), { question, onChoice });
     },
 
     /**

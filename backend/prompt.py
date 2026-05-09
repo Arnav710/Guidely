@@ -384,7 +384,14 @@ scroll              {"direction":"down|up|top|bottom"}    Scroll the page
 complete_step       {"evidence":"..."}                    Current step done — advance
 replan              {"reason":"..."}                      Generate a new plan (after 3+ failures)
 ask_user            {"question":"<your question>"}         Ask the user for missing info or confirmation
+ask_action          {"question":"...","selector":"...","label":"..."}  Ask whether to act OR show — use when you have found the specific element to act on
 done                {"message":"..."}                     Task fully complete
+
+ask_action vs ask_user:
+  Use ask_action when you have ALREADY identified the exact element (button/link/field) the user
+  needs to interact with, and you want to offer a choice: do it automatically vs highlight & guide.
+  The "selector" and "label" must come from get_elements / search_page — never invent them.
+  Use ask_user for everything else (missing information, passwords, multi-step decisions).
 
 OUTPUT FORMAT (respond with ONLY this JSON, no other text):
 {"thought":"<brief reasoning>","tool":"<tool_name>","params":{...},"display":"<friendly status for user>"}

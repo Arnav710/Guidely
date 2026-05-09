@@ -39,7 +39,7 @@ const _KNOWN_TOOLS = new Set([
   'find_and_click', 'fill_field',
   'click_link', 'goto_result',
   'click', 'type_text', 'scroll',
-  'complete_step', 'replan', 'ask_user', 'done',
+  'complete_step', 'replan', 'ask_user', 'ask_action', 'done',
   // Legacy names — map to the new tools via normaliser
   'navigate', 'navigate_and_read',
 ]);
@@ -718,6 +718,40 @@ export async function respondToUserQuestion(conversationId, answer, callbacks = 
 }
 
 /**
+ * Handle the user's response to an ask_action prompt.
+ *
+ * choice: 'do_it'    — agent executes the identified action automatically.
+ * choice: 'guide_me' — agent calls done with a plain-English instruction
+ *                      pointing to the already-highlighted element.
+ */
+export async function respondToActionChoice(conversationId, choice, callbacks = {}) {
+  if (_loopRunning) return;
+  const session = await store.getAgentSession(conversationId);
+  if (!session || session.status !== 'paused') return;
+
+  const selector = session.pendingActionSelector || null;
+  const label = session.pendingActionLabel || '';
+
+  await store.setAgentStatus(conversationId, 'running');
+
+  if (choice === 'do_it') {
+    // Inject an observation that tells the model to go ahead and click.
+    const obs = {
+      type: 'action_result', tool: 'ask_action', success: true,
+      details: `User chose: do it for me. Use find_and_click or click to activate: label="${label}" selector="${selector}".`,
+    };
+    await _runLoop(conversationId, callbacks, { screenshot: null, observation: obs });
+  } else {
+    // 'guide_me' — tell the model to summarise with a pointer to the element.
+    const obs = {
+      type: 'action_result', tool: 'ask_action', success: true,
+      details: `User chose: show me where. Call done with a friendly plain-English instruction telling the user to click the highlighted element: label="${label}".`,
+    };
+    await _runLoop(conversationId, callbacks, { screenshot: null, observation: obs });
+  }
+}
+
+/**
  * Continue an existing conversation after the agent has become idle.
  *
  * This covers two cases:
@@ -753,7 +787,7 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
   if (_loopRunning) return;
   _loopRunning = true;
 
-  const { onToolCall, onMessage, onDone, onError, onStatusChange, onStartStreaming } = callbacks;
+  const { onToolCall, onMessage, onDone, onError, onStatusChange, onStartStreaming, onActionChoice } = callbacks;
 
   let currentScreenshot = initial.screenshot || null;
   let currentObservation = initial.observation || null;
@@ -885,6 +919,24 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
           pendingUserQuestion: question,
         });
         onMessage?.({ role: 'assistant', content: question });
+        onStatusChange?.('paused');
+        break;
+      }
+
+      if (tool === 'ask_action') {
+        markToolDone();
+        const question = String(params?.question || 'I found the element. Would you like me to act on it?');
+        const selector = params?.selector || null;
+        const label = String(params?.label || '');
+        // Save the pending action context so the loop can execute it if the user chooses "do it".
+        await store.updateAgentSession(conversationId, {
+          status: 'paused',
+          pendingUserQuestion: question,
+          pendingActionSelector: selector,
+          pendingActionLabel: label,
+        });
+        // Fire the highlight callback — content.js will highlight the element.
+        onActionChoice?.({ question, selector, label });
         onStatusChange?.('paused');
         break;
       }
