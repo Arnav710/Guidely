@@ -2,7 +2,7 @@
  * agent-sidebar.js — Cursor-style persistent agent panel.
  *
  * Dynamically imported from content.js via chrome.runtime.getURL().
- * Exports: mountSidebar(callbacks) → { open, close, appendLiveMessage }
+ * Exports: mountSidebar(callbacks) → { open, close, setAgentStatus, appendToolCall, … }
  *
  * The sidebar survives page reloads by reading from conversation-store.js
  * (which reads chrome.storage.local). Only the DOM is rebuilt on each page;
@@ -11,7 +11,13 @@
 
 import * as store from '../conversation-store.js';
 import { renderPlan } from './plan-view.js';
-import { renderThread, appendMessage as appendThreadMessage, showThinking } from './chat-thread.js';
+import {
+  renderThread,
+  appendMessage as appendThreadMessage,
+  appendToolCallBubble,
+  showThinking,
+  showStreamingThought,
+} from './chat-thread.js';
 import { mountComposer } from './composer.js';
 import { renderConversationList } from './conversation-list.js';
 
@@ -49,9 +55,59 @@ const SIDEBAR_CSS = `
     font-size: 18px;
     font-weight: 700;
     color: #FF6B35;
-    margin: 0 0 8px;
+    margin: 0 0 6px;
     line-height: 1.2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
+
+  /* Agent status badge shown in the header when the loop is running. */
+  #g-agent-status {
+    display: none;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: 20px;
+    vertical-align: middle;
+  }
+  #g-agent-status.g-status-running {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #fff7f4;
+    color: #FF6B35;
+    border: 1px solid #ffd5c3;
+  }
+  #g-agent-status.g-status-paused {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #fffbf0;
+    color: #8a6400;
+    border: 1px solid #ffe680;
+  }
+  #g-agent-status.g-status-error {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #fff5f5;
+    color: #c0392b;
+    border: 1px solid #f8c4c4;
+  }
+  #g-agent-status.g-status-done {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #eafaf1;
+    color: #27ae60;
+    border: 1px solid #abebc6;
+  }
+  .g-spin {
+    display: inline-block;
+    animation: g-spin 1s linear infinite;
+  }
+  @keyframes g-spin { to { transform: rotate(360deg); } }
 
   /* ── Conversation list (collapsible) ── */
   #g-conv-toggle {
@@ -213,36 +269,88 @@ const SIDEBAR_CSS = `
     50% { opacity: 0.3; }
   }
 
+  /* ── Streaming thought bubble ── */
+  .g-msg-streaming-thought {
+    align-self: flex-start;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    background: #fdf6ff;
+    color: #6b21a8;
+    border: 1px solid #e9d5ff;
+    border-radius: 12px;
+    padding: 8px 12px;
+    font-size: 13px;
+    max-width: 95%;
+    margin-right: 2%;
+    line-height: 1.5;
+  }
+  .g-stream-icon { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
+  .g-stream-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .g-stream-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #9333ea;
+    opacity: 0.8;
+  }
+  .g-stream-text {
+    color: #4b0082;
+    font-style: italic;
+    word-break: break-word;
+    min-height: 1.2em;
+  }
+  .g-stream-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 13px;
+    background: #9333ea;
+    border-radius: 1px;
+    animation: g-blink 0.8s ease-in-out infinite;
+    vertical-align: middle;
+    margin-left: 2px;
+  }
+  @keyframes g-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  /* ── Tool-call activity bubbles ── */
+  .g-msg-tool-call {
+    align-self: flex-start;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #f7f7f7;
+    color: #555;
+    border: 1px solid #e8e8e8;
+    border-radius: 12px;
+    padding: 8px 12px;
+    font-size: 13px;
+    max-width: 95%;
+    margin-right: 2%;
+  }
+  .g-msg-tool-call[data-pending="false"] { opacity: 0.65; }
+  .g-tool-icon { font-size: 16px; flex-shrink: 0; }
+  .g-tool-text { flex: 1; line-height: 1.4; }
+  .g-tool-spinner {
+    flex-shrink: 0;
+    font-size: 16px;
+    color: #FF6B35;
+    animation: g-dots 0.9s ease-in-out infinite;
+  }
+  .g-msg-tool-call[data-pending="false"] .g-tool-spinner {
+    animation: none;
+    color: #27ae60;
+  }
+
   /* ── Composer ── */
   #g-composer {
     flex-shrink: 0;
     background: #fff;
     border-top: 1px solid #eee;
     padding: 10px 12px 14px;
-  }
-  .g-mode-row {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 8px;
-    flex-wrap: wrap;
-  }
-  .g-mode-btn {
-    font-size: 11px;
-    padding: 4px 9px;
-    border-radius: 20px;
-    border: 1.5px solid #ddd;
-    background: #fff;
-    cursor: pointer;
-    color: #666;
-    font-family: inherit;
-    transition: all 0.15s;
-    white-space: nowrap;
-  }
-  .g-mode-btn:hover { border-color: #FF6B35; color: #FF6B35; }
-  .g-mode-btn.g-mode-active {
-    background: #FF6B35;
-    border-color: #FF6B35;
-    color: #fff;
   }
   .g-composer-row { display: flex; gap: 8px; align-items: flex-end; }
   #g-textarea {
@@ -302,16 +410,20 @@ let _composerCtl = null;
 let _unsubscribe = null;
 let _convPanelOpen = false;
 let _removeThinking = null;
+let _activeConvId = null;
+// While the agent loop is running, we skip full thread re-renders so that
+// live streaming bubbles and pending tool-call bubbles are preserved in the DOM.
+// When the agent finishes (status → idle/done/error), we do one clean re-render.
+let _agentRunning = false;
 
 /**
  * Mount the persistent agent sidebar into the current page.
  * Safe to call multiple times (idempotent — reuses existing DOM element).
  *
  * @param {{ onSubmit }} callbacks
- *   onSubmit({ conversationId, text, autonomyLevel }) → called when user sends a message.
- *   The caller is responsible for the actual API call + store updates.
+ *   onSubmit({ conversationId, text }) → called when user sends a message
  *
- * @returns {{ open, close, appendLiveMessage, showThinkingIndicator, hideThinkingIndicator }}
+ * @returns {Object} sidebar control API
  */
 export async function mountSidebar({ onSubmit } = {}) {
   if (!document.getElementById('g-sidebar-styles')) {
@@ -321,7 +433,6 @@ export async function mountSidebar({ onSubmit } = {}) {
     document.head.appendChild(style);
   }
 
-  // If the sidebar is already in the DOM from a previous mount, reuse it.
   let sidebar = document.getElementById('g-sidebar');
   if (!sidebar) {
     sidebar = document.createElement('div');
@@ -331,7 +442,10 @@ export async function mountSidebar({ onSubmit } = {}) {
     sidebar.innerHTML = `
       <button type="button" id="g-close" title="Close Guidely" aria-label="Close Guidely">✕</button>
       <header id="g-header">
-        <h2 id="g-title">💡 Guidely</h2>
+        <h2 id="g-title">
+          💡 Guidely
+          <span id="g-agent-status" role="status"></span>
+        </h2>
         <button type="button" id="g-conv-toggle" aria-expanded="false">
           <span id="g-conv-toggle-icon">▾</span> Conversations
         </button>
@@ -346,7 +460,6 @@ export async function mountSidebar({ onSubmit } = {}) {
 
     sidebar.querySelector('#g-close').addEventListener('click', () => sidebar.classList.remove('g-open'));
 
-    // Conversation toggle
     const convToggle = sidebar.querySelector('#g-conv-toggle');
     const convPanel = sidebar.querySelector('#g-conv-panel');
     convToggle.addEventListener('click', () => {
@@ -360,23 +473,20 @@ export async function mountSidebar({ onSubmit } = {}) {
 
   _sidebarEl = sidebar;
 
-  // Init the store
   await store.init();
   let active = await store.getActive();
   if (!active) active = await store.createConversation();
+  _activeConvId = active.id;
 
-  // Mount composer
+  // Mount simplified composer (no mode/autonomy selector).
   const composerRoot = sidebar.querySelector('#g-composer');
-  const settings = await store.getSettings();
   _composerCtl = mountComposer(composerRoot, {
-    autonomyLevel: settings.autonomyLevel,
-    onAutonomyChange: (level) => store.updateSettings({ autonomyLevel: level }),
     onSend: async (text) => {
       const curActive = await store.getActive();
       if (!curActive) return;
       _composerCtl.setDisabled(true);
       try {
-        await onSubmit?.({ conversationId: curActive.id, text, autonomyLevel: settings.autonomyLevel });
+        await onSubmit?.({ conversationId: curActive.id, text });
       } finally {
         _composerCtl.setDisabled(false);
         _composerCtl.focus();
@@ -384,14 +494,29 @@ export async function mountSidebar({ onSubmit } = {}) {
     },
   });
 
-  // Subscribe to store changes → re-render
   if (_unsubscribe) _unsubscribe();
   _unsubscribe = store.subscribe(async () => {
     active = await store.getActive();
+    _activeConvId = active?.id ?? _activeConvId;
     await _rerender(sidebar, active);
+    // Mirror agent session status into the header badge.
+    if (active) {
+      const session = await store.getAgentSession(active.id);
+      if (session) _applyStatusBadge(session.status);
+      // If paused (ask_user), update the composer to show the answer prompt.
+      if (session?.status === 'paused' && session.pendingUserQuestion) {
+        _composerCtl?.setWaitingForAnswer(true, session.pendingUserQuestion);
+      } else {
+        _composerCtl?.setWaitingForAnswer(false);
+      }
+    }
   });
 
   await _rerender(sidebar, active);
+
+  // Check initial agent status and update badge.
+  const initSession = await store.getAgentSession(active.id);
+  if (initSession) _applyStatusBadge(initSession.status);
 
   return {
     open() {
@@ -405,6 +530,22 @@ export async function mountSidebar({ onSubmit } = {}) {
       appendThreadMessage(sidebar.querySelector('#g-thread'), message);
     },
 
+    /**
+     * Show an agent tool-call activity bubble.
+     * Returns a function to mark that bubble done (spinner → checkmark).
+     */
+    appendToolCall({ tool, display }) {
+      return appendToolCallBubble(sidebar.querySelector('#g-thread'), { tool, display });
+    },
+
+    /**
+     * Start a live streaming thought bubble.
+     * Returns { updateThought, markSearching, markReplanning, dismiss }.
+     */
+    startStreamingThought() {
+      return showStreamingThought(_sidebarEl?.querySelector('#g-thread'));
+    },
+
     showThinkingIndicator() {
       _removeThinking?.();
       _removeThinking = showThinking(sidebar.querySelector('#g-thread'));
@@ -413,21 +554,67 @@ export async function mountSidebar({ onSubmit } = {}) {
       _removeThinking?.();
       _removeThinking = null;
     },
+
+    /**
+     * Update the status badge in the header.
+     * @param {'idle'|'running'|'paused'|'done'|'error'} status
+     */
+    setAgentStatus(status) {
+      const wasRunning = _agentRunning;
+      _agentRunning = (status === 'running');
+
+      _applyStatusBadge(status);
+
+      if (status === 'paused') {
+        _composerCtl?.setWaitingForAnswer(true);
+      } else if (status === 'idle' || status === 'done' || status === 'error') {
+        _composerCtl?.setWaitingForAnswer(false);
+      }
+
+      // When the agent finishes, do one clean re-render so persisted messages
+      // are shown exactly as stored (removing any stale pending tool-call bubbles).
+      if (wasRunning && !_agentRunning) {
+        store.getActive().then((active) => {
+          if (active) _rerender(sidebar, active);
+        });
+      }
+    },
   };
 }
 
-// ── Internal render ───────────────────────────────────────────────────────────
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+function _applyStatusBadge(status) {
+  const badge = _sidebarEl?.querySelector('#g-agent-status');
+  if (!badge) return;
+
+  badge.className = '';
+
+  const MAP = {
+    running: { cls: 'g-status-running', html: '<span class="g-spin">⟳</span> Working…' },
+    paused:  { cls: 'g-status-paused',  html: '⏸ Waiting for you' },
+    error:   { cls: 'g-status-error',   html: '⚠ Error' },
+    done:    { cls: 'g-status-done',    html: '✓ Done' },
+  };
+
+  const cfg = MAP[status];
+  if (cfg) {
+    badge.classList.add(cfg.cls);
+    badge.innerHTML = cfg.html;
+  }
+  // 'idle' leaves badge with no class → display:none via CSS
+}
 
 async function _rerender(sidebar, active) {
   if (!sidebar || !active) return;
-
-  // Plan view
+  // Always update the plan pane (it shows step progress which is useful while running).
   renderPlan(sidebar.querySelector('#g-plan-pane'), active.workflow ?? null);
-
-  // Thread
-  renderThread(sidebar.querySelector('#g-thread'), active.messages ?? []);
-
-  // Conversation list (only if panel is open — avoids re-querying storage constantly)
+  // Only do a full thread re-render when the agent is NOT actively running.
+  // While running, the thread is updated live via appendLiveMessage / appendToolCall,
+  // so a full re-render would wipe those in-progress bubbles.
+  if (!_agentRunning) {
+    renderThread(sidebar.querySelector('#g-thread'), active.messages ?? []);
+  }
   if (_convPanelOpen) _renderConvList();
 }
 
@@ -443,7 +630,8 @@ async function _renderConvList() {
       _convPanelOpen = false;
       panel.classList.remove('g-expanded');
       _sidebarEl?.querySelector('#g-conv-toggle')?.setAttribute('aria-expanded', 'false');
-      _sidebarEl?.querySelector('#g-conv-toggle-icon') && (_sidebarEl.querySelector('#g-conv-toggle-icon').textContent = '▾');
+      const icon = _sidebarEl?.querySelector('#g-conv-toggle-icon');
+      if (icon) icon.textContent = '▾';
     },
     onNew: async () => {
       await store.createConversation();

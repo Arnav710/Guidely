@@ -1,33 +1,7 @@
 // Schema for persistent conversation storage (chrome.storage.local).
 // Version bumps trigger migrate() — add new fields with defaults there.
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const STORE_KEY = 'guidely.v1';
-
-// Goal-detection patterns — if the user's first message matches, we offer a workflow plan.
-export const GOAL_PATTERNS = [
-  /^help me /i,
-  /^how (do|can) i /i,
-  /^i (want|need) to /i,
-  /^renew /i,
-  /^appeal /i,
-  /^set up /i,
-  /^apply for /i,
-  /^cancel /i,
-  /^pay /i,
-  /^file /i,
-  /^sign up/i,
-  /^register /i,
-  /^schedule /i,
-  /^book /i,
-  /^change my /i,
-  /^update my /i,
-];
-
-/** @returns {boolean} */
-export function isGoalLike(text) {
-  if (!text || text.length < 6) return false;
-  return GOAL_PATTERNS.some((re) => re.test(text.trim()));
-}
 
 /** @returns {import('./conversation-store.js').Store} */
 export function emptyStore() {
@@ -36,12 +10,26 @@ export function emptyStore() {
     activeConversationId: null,
     conversations: {},
     settings: {
-      autonomyLevel: 1,
       voiceEnabled: false,
       vigilanceEnabled: true,
       motionReduced: false,
       fontScale: 1,
     },
+  };
+}
+
+/**
+ * Default agent session shape injected into every conversation.
+ * @returns {AgentSession}
+ */
+export function emptyAgentSession() {
+  return {
+    status: 'idle',      // 'idle' | 'running' | 'paused' | 'done' | 'error'
+    retryCount: 0,       // consecutive failures on the current step
+    toolHistory: [],     // ring buffer of last 3 ToolCall records
+    pendingUserQuestion: null,  // set when status === 'paused' (ask_user)
+    awaitingPageLoad: false,    // true immediately after a navigate action
+    lastNavUrl: null,           // the URL we navigated to (debug / resume hint)
   };
 }
 
@@ -55,7 +43,20 @@ export function migrate(raw) {
   const fresh = emptyStore();
   const merged = { ...fresh, ...raw };
   merged.settings = { ...fresh.settings, ...(raw.settings || {}) };
+  // Drop legacy autonomyLevel from settings if it was stored there
+  delete merged.settings.autonomyLevel;
   merged.conversations = raw.conversations && typeof raw.conversations === 'object'
     ? raw.conversations : {};
+
+  // Migrate each conversation: ensure agentSession field exists
+  for (const conv of Object.values(merged.conversations)) {
+    if (!conv.agentSession || typeof conv.agentSession !== 'object') {
+      conv.agentSession = emptyAgentSession();
+    } else {
+      // Fill any missing fields added in later schema versions
+      conv.agentSession = { ...emptyAgentSession(), ...conv.agentSession };
+    }
+  }
+
   return merged;
 }

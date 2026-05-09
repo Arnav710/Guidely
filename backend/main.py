@@ -2,6 +2,7 @@ import json
 import logging
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from models import (
     AnalyzeRequest,
     AnalyzeResponse,
@@ -15,6 +16,12 @@ from models import (
     WorkflowPlanResponse,
     WorkflowPlanStepOut,
     WorkflowPlanOut,
+    WorkflowExtendRequest,
+    WorkflowExtendResponse,
+    AgentStartRequest,
+    AgentStartResponse,
+    AgentStepRequest,
+    AgentStepResponse,
 )
 from ollama_client import (
     analyze_guidely,
@@ -26,8 +33,14 @@ from ollama_client import (
     OllamaUnavailableError,
     MIN_SCREENSHOT_B64_CHARS,
 )
-from prompt import WORKFLOW_PLAN_PROMPT, EXPLAIN_PROMPT
+from prompt import WORKFLOW_PLAN_PROMPT, WORKFLOW_EXTEND_PROMPT, EXPLAIN_PROMPT
+from agent import run_agent_start, run_agent_step, stream_agent_step
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Guidely Backend", version="1.0.0")
@@ -159,7 +172,7 @@ async def analyze(
 
 @app.post("/workflow/plan", response_model=WorkflowPlanResponse)
 async def workflow_plan(request: WorkflowPlanRequest):
-    """Generate a 3-8 step plan for the given goal and page context."""
+    """Generate the first 2-3 steps for the given goal and page context."""
     ctx = request.context
     page_lines: list[str] = []
     if ctx.page_url:
@@ -191,7 +204,7 @@ async def workflow_plan(request: WorkflowPlanRequest):
             id=str(s.get("id") or f"s{i + 1}"),
             description=str(s.get("description", ""))[:300],
         )
-        for i, s in enumerate(steps_raw[:8])
+        for i, s in enumerate(steps_raw[:3])   # cap at 3 for rolling-horizon planning
         if isinstance(s, dict) and s.get("description")
     ]
     if not steps:
@@ -203,6 +216,61 @@ async def workflow_plan(request: WorkflowPlanRequest):
             steps=steps,
         )
     )
+
+
+@app.post("/workflow/extend", response_model=WorkflowExtendResponse)
+async def workflow_extend(request: WorkflowExtendRequest):
+    """
+    Given goal + completed steps + current page, decide if the goal is done
+    or plan the next 2-3 steps. Called automatically when the user finishes
+    the last planned step.
+    """
+    ctx = request.context
+    lines: list[str] = [f"Goal: {request.goal}"]
+
+    if request.completed_steps:
+        done_list = "\n".join(f"  - {s}" for s in request.completed_steps)
+        lines.append(f"\nSteps already completed:\n{done_list}")
+    else:
+        lines.append("\nNo steps have been completed yet.")
+
+    page_parts: list[str] = []
+    if ctx.page_url:
+        page_parts.append(f"URL: {ctx.page_url}")
+    if ctx.page_title:
+        page_parts.append(f"Page title: {ctx.page_title}")
+    if ctx.dom_summary:
+        page_parts.append(f"Interactive elements on this page:\n{ctx.dom_summary}")
+    if page_parts:
+        lines.append("\nCurrent page:\n" + "\n".join(page_parts))
+
+    user_text = "\n".join(lines)
+
+    try:
+        raw = await call_ollama_text(WORKFLOW_EXTEND_PROMPT, user_text)
+    except OllamaUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    try:
+        parsed = extract_json(raw)
+    except (ValueError, json.JSONDecodeError) as exc:
+        logger.warning("workflow/extend JSON parse failed: %s | raw: %s", exc, raw[:300])
+        raise HTTPException(status_code=502, detail="Model returned an unparseable response. Please try again.")
+
+    if parsed.get("done"):
+        return WorkflowExtendResponse(done=True, steps=[])
+
+    steps_raw = parsed.get("steps") or []
+    offset = request.existing_step_count
+    steps = [
+        WorkflowPlanStepOut(
+            id=str(s.get("id") or f"s{offset + i + 1}"),
+            description=str(s.get("description", ""))[:300],
+        )
+        for i, s in enumerate(steps_raw[:3])
+        if isinstance(s, dict) and s.get("description")
+    ]
+    return WorkflowExtendResponse(done=False, steps=steps)
 
 
 @app.post("/explain", response_model=ExplainResponse)
@@ -230,4 +298,66 @@ async def explain(request: ExplainRequest):
         why=str(parsed.get("why") or "")[:2000],
         what_you_should_do=str(parsed.get("what_you_should_do") or "")[:2000],
         warnings=[str(w)[:500] for w in warnings[:3]],
+    )
+
+
+# ── Autonomous agent endpoints ────────────────────────────────────────────────
+
+@app.post("/agent/start", response_model=AgentStartResponse)
+async def agent_start(request: AgentStartRequest):
+    """
+    Interpret the user's goal and return a 3–8 step execution plan.
+    Called once at the start of a new agent session.
+    """
+    try:
+        return await run_agent_start(request)
+    except OllamaUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/agent/step", response_model=AgentStepResponse)
+async def agent_step(request: AgentStepRequest):
+    """
+    Run one iteration of the agent loop.
+    Returns the next tool call for the extension to execute.
+    The extension sends the tool result back in the next call.
+    """
+    try:
+        return await run_agent_step(request)
+    except OllamaUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.post("/agent/step/stream")
+async def agent_step_stream(request: AgentStepRequest):
+    """
+    Streaming version of /agent/step using Server-Sent Events (SSE).
+    Streams thought tokens in real-time as the model generates them, then
+    emits a final "done" frame with the fully-parsed tool call.
+
+    SSE event types (each line: data: <json>):
+      {"type":"thinking"}                      — model started
+      {"type":"thought","text":"..."}          — partial thought visible while generating
+      {"type":"searching","query":"..."}       — about to do a web search
+      {"type":"replanning","reason":"..."}     — about to replan
+      {"type":"done","tool":"...","params":{...},"display":"...","thought":"..."}
+      {"type":"error","message":"..."}         — unrecoverable error
+    """
+    async def _generate():
+        try:
+            async for frame in stream_agent_step(request):
+                yield frame
+        except Exception as exc:
+            import json as _json
+            yield f"data: {_json.dumps({'type': 'error', 'message': str(exc)[:300]})}\n\n"
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering if present
+        },
     )

@@ -1,60 +1,37 @@
 /**
- * composer.js — text input area + send button + autonomy level selector.
+ * composer.js — goal input area for the autonomous agent.
+ *
+ * Single mode only: the user describes what they want to accomplish.
+ * The mode/autonomy selector is gone — the agent handles everything automatically.
+ *
+ * When the agent is paused waiting for user input (ask_user), the placeholder
+ * and hint text update to reflect that the agent is waiting for a reply.
  */
-
-const AUTONOMY_LABELS = [
-  { value: 0, label: 'Explain only', title: 'I will just explain what the page is about.' },
-  { value: 1, label: 'Highlight', title: 'I will point to the next button or field.' },
-  { value: 2, label: 'Fill + Ask', title: 'I will fill forms but ask before clicking Submit.' },
-  { value: 3, label: 'Auto + Confirm', title: 'I will act, with a 3-second hold-to-confirm.' },
-];
 
 /**
  * Mount the composer into rootEl.
  * @param {HTMLElement} rootEl
- * @param {{ autonomyLevel, onSend, onAutonomyChange }} opts
- * @returns {{ focus, setDisabled, setAutonomyLevel }}
+ * @param {{ onSend }} opts
+ * @returns {{ focus, setDisabled, setWaitingForAnswer }}
  */
-export function mountComposer(rootEl, { autonomyLevel = 1, onSend, onAutonomyChange } = {}) {
+export function mountComposer(rootEl, { onSend } = {}) {
   rootEl.innerHTML = `
-    <div class="g-mode-row" role="group" aria-label="Assistance level">
-      ${AUTONOMY_LABELS.map((a) => `
-        <button type="button"
-          class="g-mode-btn${a.value === autonomyLevel ? ' g-mode-active' : ''}"
-          data-level="${a.value}"
-          title="${a.title}"
-          aria-pressed="${a.value === autonomyLevel}"
-        >${a.label}</button>
-      `).join('')}
-    </div>
     <div class="g-composer-row">
       <textarea
         id="g-textarea"
         rows="2"
         maxlength="2000"
-        placeholder="Ask anything about this page… (Enter to send)"
+        placeholder="What do you need help with? (e.g. renew my license, pay my bill…)"
         aria-label="Message to Guidely"
       ></textarea>
       <button type="button" id="g-send" aria-label="Send">Send</button>
     </div>
-    <p class="g-hint">Enter send &nbsp;·&nbsp; Shift+Enter new line</p>
+    <p class="g-hint" id="g-composer-hint">Enter to send &nbsp;·&nbsp; Shift+Enter for new line</p>
   `;
 
   const ta = rootEl.querySelector('#g-textarea');
   const sendBtn = rootEl.querySelector('#g-send');
-  const modeBtns = rootEl.querySelectorAll('.g-mode-btn');
-
-  // Autonomy buttons
-  modeBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const level = Number(btn.dataset.level);
-      modeBtns.forEach((b) => {
-        b.classList.toggle('g-mode-active', Number(b.dataset.level) === level);
-        b.setAttribute('aria-pressed', String(Number(b.dataset.level) === level));
-      });
-      onAutonomyChange?.(level);
-    });
-  });
+  const hint = rootEl.querySelector('#g-composer-hint');
 
   function fire() {
     const text = (ta.value || '').trim();
@@ -74,17 +51,24 @@ export function mountComposer(rootEl, { autonomyLevel = 1, onSend, onAutonomyCha
 
   return {
     focus() { ta.focus(); },
+
     setDisabled(v) {
       ta.disabled = v;
       sendBtn.disabled = v;
       sendBtn.textContent = v ? '…' : 'Send';
     },
-    setAutonomyLevel(level) {
-      modeBtns.forEach((btn) => {
-        const match = Number(btn.dataset.level) === level;
-        btn.classList.toggle('g-mode-active', match);
-        btn.setAttribute('aria-pressed', String(match));
-      });
+
+    /** Switch the composer into "waiting for your answer" mode when the agent calls ask_user. */
+    setWaitingForAnswer(waiting, question = '') {
+      if (waiting) {
+        ta.placeholder = question || 'Type your answer here…';
+        if (hint) hint.textContent = 'The agent is waiting for your reply — type it and press Enter.';
+        sendBtn.textContent = 'Reply';
+      } else {
+        ta.placeholder = 'What do you need help with? (e.g. renew my license, pay my bill…)';
+        if (hint) hint.textContent = 'Enter to send \u00b7 Shift+Enter for new line';
+        sendBtn.textContent = 'Send';
+      }
     },
   };
 }

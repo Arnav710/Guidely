@@ -33,9 +33,175 @@ async function _post(path, body) {
   }
 }
 
+// ── Agent endpoints (new autonomous mode) ────────────────────────────────────
+
 /**
- * POST /analyze — main page-understanding call.
- * @param {{ conversationId, questionText, screenshot, domMap, history, workflow, autonomyLevel, pageUrl, pageTitle, trace }} opts
+ * POST /agent/start — interpret goal + page context, return a step plan.
+ */
+export async function agentStart({ goal, pageUrl = '', pageTitle = '', domSummary = '' }) {
+  return _post('/agent/start', {
+    goal,
+    page_url: pageUrl || null,
+    page_title: pageTitle || null,
+    dom_summary: domSummary || null,
+  });
+}
+
+/**
+ * POST /agent/step — non-streaming version (kept as fallback).
+ */
+export async function agentStep({
+  goal,
+  plan,
+  lastToolCalls = [],
+  pageUrl = '',
+  pageTitle = '',
+  screenshot = null,
+  observation = null,
+  retryCount = 0,
+} = {}) {
+  const body = {
+    goal,
+    plan,
+    last_tool_calls: lastToolCalls,
+    page_url: pageUrl || null,
+    page_title: pageTitle || null,
+    observation: observation || null,
+    retry_count: retryCount,
+  };
+  if (screenshot && screenshot.length >= 80) body.screenshot = screenshot;
+  return _post('/agent/step', body);
+}
+
+/**
+ * POST /agent/step/stream — streaming SSE version.
+ *
+ * Calls callbacks as SSE frames arrive:
+ *   onThinking()                       — model started generating
+ *   onThought(text)                    — partial thought text (progressive)
+ *   onSearching(query)                 — web_search triggered
+ *   onReplanning(reason)               — replan triggered
+ *   onDone({ tool, params, display, thought, new_steps })
+ *   onError(message)                   — unrecoverable error
+ *
+ * Returns a Promise that resolves once the stream is complete (or on error).
+ */
+export async function agentStepStream(
+  { goal, plan, conversationId = null, lastToolCalls = [], pageUrl = '', pageTitle = '', screenshot = null, observation = null, retryCount = 0 } = {},
+  { onThinking, onThought, onSearching, onReplanning, onDone, onError } = {},
+) {
+  const body = {
+    goal,
+    plan,
+    last_tool_calls: lastToolCalls,
+    page_url: pageUrl || null,
+    page_title: pageTitle || null,
+    observation: observation || null,
+    retry_count: retryCount,
+    conversation_id: conversationId || null,
+  };
+  if (screenshot && screenshot.length >= 80) body.screenshot = screenshot;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 240_000); // 4 min ceiling
+
+  try {
+    const res = await fetch(`${BACKEND}/agent/step/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const msg = err.detail ?? `HTTP ${res.status}`;
+      onError?.(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let leftover = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const text = leftover + decoder.decode(value, { stream: true });
+      const lines = text.split('\n');
+      // Keep any incomplete last line for the next iteration.
+      leftover = lines.pop() ?? '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        let event;
+        try { event = JSON.parse(line.slice(6)); } catch { continue; }
+
+        switch (event.type) {
+          case 'thinking':   onThinking?.(); break;
+          case 'thought':    onThought?.(event.text ?? ''); break;
+          case 'searching':  onSearching?.(event.query ?? ''); break;
+          case 'replanning': onReplanning?.(event.reason ?? ''); break;
+          case 'done':       onDone?.(event); break;
+          case 'error':      onError?.(event.message ?? 'Unknown error'); break;
+        }
+      }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      onError?.('Request timed out. Ollama may be busy — try again.');
+    } else {
+      onError?.(err.message ?? 'Connection failed');
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── Legacy endpoints (kept for backward compatibility) ────────────────────────
+
+/**
+ * POST /workflow/plan — generate the first 2-3 steps for a goal.
+ */
+export async function fetchWorkflowPlan({ goal, pageUrl = '', pageTitle = '', domSummary = '' }) {
+  return _post('/workflow/plan', {
+    goal,
+    context: {
+      page_url: pageUrl || null,
+      page_title: pageTitle || null,
+      dom_summary: domSummary || null,
+    },
+  });
+}
+
+/**
+ * POST /workflow/extend — given the goal + completed steps + current page,
+ * get the next 2-3 steps or a "done" signal.
+ */
+export async function extendWorkflow({
+  goal,
+  completedSteps = [],
+  existingStepCount = 0,
+  pageUrl = '',
+  pageTitle = '',
+  domSummary = '',
+}) {
+  return _post('/workflow/extend', {
+    goal,
+    completed_steps: completedSteps,
+    existing_step_count: existingStepCount,
+    context: {
+      page_url: pageUrl || null,
+      page_title: pageTitle || null,
+      dom_summary: domSummary || null,
+    },
+  });
+}
+
+/**
+ * POST /analyze — original page-understanding call (no longer used by the sidebar,
+ * kept so popup.js health checks and any external tooling still work).
  */
 export async function runAnalyze({
   conversationId = null,
@@ -66,30 +232,13 @@ export async function runAnalyze({
 }
 
 /**
- * POST /workflow/plan — generate a step-by-step plan for a goal.
- * @param {{ goal, pageUrl, pageTitle, domSummary }} opts
- * @returns {Promise<{ plan: { goal: string, steps: Array<{id, description}> } }>}
- */
-export async function fetchWorkflowPlan({ goal, pageUrl = '', pageTitle = '', domSummary = '' }) {
-  return _post('/workflow/plan', {
-    goal,
-    context: {
-      page_url: pageUrl || null,
-      page_title: pageTitle || null,
-      dom_summary: domSummary || null,
-    },
-  });
-}
-
-/**
  * POST /explain — plain-English explainer for confusing text.
- * @param {{ text, domainHint }} opts
  */
 export async function runExplain({ text, domainHint = 'generic' }) {
   return _post('/explain', { text, domain_hint: domainHint });
 }
 
-/** GET /health — backend liveness check (30-second version for polling). */
+/** GET /health — backend liveness check. */
 export async function checkHealth() {
   try {
     const res = await fetch(`${BACKEND}/health`, { signal: AbortSignal.timeout(3000) });

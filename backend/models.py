@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Any, Literal
+from typing import Optional, Any, Literal, List
 
 
 class DomElement(BaseModel):
@@ -105,6 +105,20 @@ class WorkflowPlanResponse(BaseModel):
     plan: WorkflowPlanOut
 
 
+# ── Workflow extend ───────────────────────────────────────────────────────────
+
+class WorkflowExtendRequest(BaseModel):
+    goal: str = Field(..., max_length=500)
+    completed_steps: list[str] = Field(default_factory=list, max_length=20)
+    existing_step_count: int = Field(0, ge=0)
+    context: WorkflowContext
+
+
+class WorkflowExtendResponse(BaseModel):
+    done: bool
+    steps: list[WorkflowPlanStepOut] = []
+
+
 # ── Explain ──────────────────────────────────────────────────────────────────
 
 class ExplainRequest(BaseModel):
@@ -134,3 +148,75 @@ class ModelsResponse(BaseModel):
 
 class SetModelRequest(BaseModel):
     model: str
+
+
+# ── Agent (autonomous mode) ───────────────────────────────────────────────────
+
+class AgentToolCallIn(BaseModel):
+    """One tool call + its result, stored in the rolling history sent with each step."""
+    tool: str = Field(..., max_length=64)
+    params: dict = Field(default_factory=dict)
+    # Compact result — never raw screenshots; just text/structured summaries.
+    result: Optional[Any] = None
+    called_at: Optional[int] = None
+
+
+class AgentPlanStepIn(BaseModel):
+    id: str = Field(..., max_length=32)
+    description: str = Field(..., max_length=300)
+    status: Literal["pending", "in_progress", "done", "skipped", "blocked"] = "pending"
+
+
+class AgentPlanIn(BaseModel):
+    goal: str = Field(..., max_length=500)
+    steps: List[AgentPlanStepIn]
+    current_step_idx: int = Field(0, ge=0)
+
+
+class AgentStartRequest(BaseModel):
+    goal: str = Field(..., max_length=500)
+    page_url: Optional[str] = Field(None, max_length=2000)
+    page_title: Optional[str] = Field(None, max_length=500)
+    # Compact summary of page elements to seed the plan (not full DOM).
+    dom_summary: Optional[str] = Field(None, max_length=2000)
+
+
+class AgentStartResponse(BaseModel):
+    plan: dict  # { goal: str, steps: [{id, description}] }
+
+
+class AgentStepRequest(BaseModel):
+    goal: str = Field(..., max_length=500)
+    plan: AgentPlanIn
+    # Rolling window of recent tool calls (max 3 sent by client).
+    last_tool_calls: List[AgentToolCallIn] = Field(default_factory=list, max_length=5)
+    page_url: Optional[str] = Field(None, max_length=2000)
+    page_title: Optional[str] = Field(None, max_length=500)
+    # Latest screenshot — only sent when the most recent tool was screenshot/click/navigate.
+    screenshot: Optional[str] = Field(None)
+    # Structured result from most recent observation tool (sections/elements/search/text/action_result).
+    observation: Optional[Any] = None
+    # How many times the current step has been retried.
+    retry_count: int = Field(0, ge=0, le=20)
+    model: Optional[str] = None
+    # Conversation ID — used to key the search results cache for goto_result resolution.
+    conversation_id: Optional[str] = Field(None, max_length=128)
+
+    @field_validator("screenshot", mode="before")
+    @classmethod
+    def screenshot_str_or_none(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        return None
+
+
+class AgentStepResponse(BaseModel):
+    thought: Optional[str] = None
+    tool: str
+    params: dict = Field(default_factory=dict)
+    display: str = ""
+    model_used: Optional[str] = None
+    # Populated only when tool == "replan"; new steps to replace remaining steps.
+    new_steps: Optional[List[dict]] = None

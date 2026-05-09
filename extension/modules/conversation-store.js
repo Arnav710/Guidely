@@ -9,7 +9,7 @@
  * Call store.init() once before using any other function.
  */
 
-import { STORE_KEY, emptyStore, migrate } from './conversation-schema.js';
+import { STORE_KEY, emptyStore, emptyAgentSession, migrate } from './conversation-schema.js';
 
 const listeners = new Set();
 let cache = null;
@@ -215,6 +215,32 @@ export async function applyStepUpdate(conversationId, stepUpdate) {
   _broadcast();
 }
 
+/**
+ * Append new steps to an in-progress workflow without touching completed steps.
+ * Used by the rolling-horizon planner when the user finishes the last planned step.
+ */
+export async function appendWorkflowSteps(conversationId, newSteps) {
+  await init();
+  const c = cache.conversations[conversationId];
+  if (!c?.workflow) return null;
+
+  const fresh = (newSteps || []).map((s, i) => ({
+    id: s.id || `s${c.workflow.steps.length + i + 1}`,
+    description: s.description || '',
+    status: 'pending',
+  }));
+  c.workflow.steps.push(...fresh);
+  // Un-mark completion so the sidebar shows the plan as still active.
+  c.workflow.completedAt = null;
+  // Advance pointer to the first pending step in case it was sitting at the end.
+  const nextIdx = c.workflow.steps.findIndex((s) => s.status === 'pending');
+  if (nextIdx >= 0) c.workflow.currentStepIdx = nextIdx;
+  c.updatedAt = Date.now();
+  await _save();
+  _broadcast();
+  return c.workflow;
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export async function getSettings() {
@@ -228,4 +254,82 @@ export async function updateSettings(patch) {
   await _save();
   _broadcast();
   return { ...cache.settings };
+}
+
+// ── Agent session ──────────────────────────────────────────────────────────────
+// These helpers manage the agentSession field inside each Conversation.
+// agentSession tracks the live loop state: status, retry count, tool history,
+// and whether we're waiting for a page load after navigation.
+
+/** Return the agentSession for a conversation (creates it if missing). */
+export async function getAgentSession(conversationId) {
+  await init();
+  const c = cache.conversations[conversationId];
+  if (!c) return null;
+  if (!c.agentSession) c.agentSession = emptyAgentSession();
+  return { ...c.agentSession };
+}
+
+/** Patch any fields on agentSession. */
+export async function updateAgentSession(conversationId, patch) {
+  await init();
+  const c = cache.conversations[conversationId];
+  if (!c) return null;
+  if (!c.agentSession) c.agentSession = emptyAgentSession();
+  c.agentSession = { ...c.agentSession, ...patch };
+  c.updatedAt = Date.now();
+  await _save();
+  _broadcast();
+  return { ...c.agentSession };
+}
+
+/** Convenience: just set the running status. */
+export async function setAgentStatus(conversationId, status) {
+  return updateAgentSession(conversationId, { status });
+}
+
+/**
+ * Add a tool call record to the rolling history (capped at 3 entries).
+ * Pass the record with the final result once the tool has executed.
+ */
+export async function addToToolHistory(conversationId, toolCallRecord) {
+  await init();
+  const c = cache.conversations[conversationId];
+  if (!c) return;
+  if (!c.agentSession) c.agentSession = emptyAgentSession();
+
+  const history = Array.isArray(c.agentSession.toolHistory) ? c.agentSession.toolHistory : [];
+  history.push(toolCallRecord);
+  // Keep only last 3
+  c.agentSession.toolHistory = history.slice(-3);
+  c.updatedAt = Date.now();
+  await _save();
+  // No broadcast — tool history updates are frequent; sidebar doesn't react to them.
+}
+
+/**
+ * Replace remaining (non-done) workflow steps with new ones after a replan.
+ * Keeps already-completed steps intact.
+ */
+export async function replanWorkflow(conversationId, newSteps) {
+  await init();
+  const c = cache.conversations[conversationId];
+  if (!c?.workflow) return null;
+
+  const doneSteps = c.workflow.steps.filter(
+    (s) => s.status === 'done' || s.status === 'skipped',
+  );
+
+  const freshSteps = (newSteps || []).map((s, i) => ({
+    id: s.id || `r${i + 1}`,
+    description: s.description || '',
+    status: 'pending',
+  }));
+
+  c.workflow.steps = [...doneSteps, ...freshSteps];
+  c.workflow.currentStepIdx = doneSteps.length;
+  c.updatedAt = Date.now();
+  await _save();
+  _broadcast();
+  return c.workflow;
 }

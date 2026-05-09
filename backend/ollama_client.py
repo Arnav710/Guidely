@@ -37,21 +37,60 @@ from models import WorkflowSnapshot
 
 MIN_SCREENSHOT_B64_CHARS = 80
 
+# Split timeout: short connect (fail fast) + long read (model inference can be slow)
+_OLLAMA_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
+
+# Ollama generation options applied to every call.
+# repeat_penalty > 1.0 penalises repeated tokens — prevents sw/sw/sw hallucination loops.
+# num_predict caps generation length so a runaway loop is cut short automatically.
+_OLLAMA_OPTIONS: dict[str, Any] = {
+    "repeat_penalty": 1.15,
+    "num_predict": 512,
+}
+
+# Tighter options for the streaming agent endpoint (must still fit full tool JSON)
+_AGENT_OPTIONS: dict[str, Any] = {
+    "repeat_penalty": 1.18,
+    "num_predict": 512,
+}
+
+# ── Constrained output schema for agent calls ─────────────────────────────────
+# Ollama supports passing a full JSON Schema as the `format` field.
+# By listing every valid tool name in an enum, the model's constrained-decoding
+# engine is physically prevented from generating an invalid/hallucinated tool name.
+AGENT_TOOL_NAMES: list[str] = [
+    "get_sections", "get_elements", "search_page", "get_page_text",
+    "screenshot", "web_search",
+    "find_and_click", "fill_field",
+    "click_link", "goto_result",
+    "click", "type_text", "scroll",
+    "complete_step", "replan", "ask_user", "done",
+]
+
+_AGENT_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "thought":  {"type": "string"},
+        "tool":     {"type": "string", "enum": AGENT_TOOL_NAMES},
+        "params":   {"type": "object"},
+        "display":  {"type": "string"},
+    },
+    "required": ["thought", "tool", "params", "display"],
+}
+
 OLLAMA_BASE = "http://localhost:11434"
 OLLAMA_GENERATE_URL = f"{OLLAMA_BASE}/api/generate"
 OLLAMA_TAGS_URL = f"{OLLAMA_BASE}/api/tags"
 
 # Fallback preference order — first match wins if multiple are installed
 # Tag reference: e2b=~5B vision, e4b=~9B vision (default), 26b/31b larger
-# Prefer the faster multimodal variants; 26b/31b are only used when explicitly
-# requested via the `model` argument (they are too slow for interactive use).
 _MODEL_PREFERENCE = [
+    "gemma4:31b",
+    "gemma4:26b",
     "gemma4:e4b",
     "gemma4:e2b",
     "gemma4:2b",
     "gemma4",
-    "gemma4:26b",
-    "gemma4:31b",
 ]
 
 _active_model: str = "gemma4:e4b"  # prefer 4B-class multimodal; overwritten after detection if missing
@@ -130,6 +169,33 @@ def extract_json(raw: str) -> dict:
     return json.loads(match.group())
 
 
+def detect_hallucination(raw: str) -> bool:
+    """
+    Detect token-repetition hallucinations common in small models (e.g. Gemma 4 2B/4B).
+
+    Two patterns are checked:
+    1. Path-segment repetition: same URL path chunk appears 4+ times consecutively
+       (catches bing.com/sw/sw/sw/sw/sw/sw… and similar patterns).
+    2. Short n-gram repetition: any 3–10 char sequence that repeats 8+ times
+       anywhere in the output (catches broader looping).
+    """
+    if not raw:
+        return False
+
+    # Pattern 1 — repeated URL path segment  (e.g. /sw/sw/sw/sw)
+    if re.search(r"(/[^/\s]{1,20})\1{3,}", raw):
+        return True
+
+    # Pattern 2 — any short substring repeated 8+ times
+    for length in range(3, 11):
+        for i in range(len(raw) - length * 8):
+            chunk = raw[i : i + length]
+            if raw.count(chunk) >= 8 and chunk.strip() and len(chunk.strip()) >= 2:
+                return True
+
+    return False
+
+
 async def call_ollama(
     elements: list[DomElement],
     history: list[HistoryEntry],
@@ -183,6 +249,7 @@ async def call_ollama(
         "prompt": user_text,
         "stream": False,
         "format": "json",
+        "options": _OLLAMA_OPTIONS,
     }
     if has_vision:
         payload["images"] = [screenshot_b64]
@@ -196,10 +263,12 @@ async def call_ollama(
         return body, elapsed_ms
 
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=_OLLAMA_TIMEOUT) as client:
             body, elapsed_ms = await _do_post(client)
     except httpx.ConnectError:
         raise OllamaUnavailableError("Ollama is not running at localhost:11434")
+    except httpx.ReadTimeout:
+        raise OllamaUnavailableError("Ollama timed out generating a response — the model may be overloaded or too large for this hardware")
     except httpx.RemoteProtocolError as exc:
         raise OllamaUnavailableError(f"Ollama disconnected unexpectedly: {exc}")
     except httpx.HTTPStatusError as exc:
@@ -238,7 +307,7 @@ async def call_ollama(
         if retry:
             payload["prompt"] += "\n\nYou MUST respond with ONLY the JSON object. No other text."
             try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
+                async with httpx.AsyncClient(timeout=_OLLAMA_TIMEOUT) as client:
                     body2, elapsed2 = await _do_post(client)
                 err2 = _ollama_generate_error_message(body2)
                 if err2:
@@ -251,7 +320,7 @@ async def call_ollama(
                     return _finish(result, True)
                 except (ValueError, json.JSONDecodeError):
                     pass
-            except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.HTTPStatusError) as exc:
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError, httpx.HTTPStatusError) as exc:
                 logger.warning("Ollama retry HTTP failed: %s", exc)
             except OllamaUnavailableError:
                 raise
@@ -270,6 +339,174 @@ def _normalize_analyze_out(out: dict, has_vision: bool) -> dict:
     else:
         o["needs_screenshot"] = bool(o.get("needs_screenshot"))
     return o
+
+
+async def call_agent(
+    system_prompt: str,
+    user_text: str,
+    screenshot_b64: Optional[str] = None,
+    model: Optional[str] = None,
+) -> dict:
+    """
+    Agent-specific Ollama call: plain system + user text, optional vision image.
+    Returns a parsed JSON dict. On parse failure retries once, then falls back
+    to an ask_user tool call so the loop degrades gracefully instead of crashing.
+    """
+    global _active_model, _model_detected
+    if not _model_detected:
+        _active_model = await _detect_best_model()
+        _model_detected = True
+
+    chosen = model or _active_model
+    has_vision = screenshot_usable(screenshot_b64)
+
+    payload: dict[str, Any] = {
+        "model": chosen,
+        "system": system_prompt,
+        "prompt": user_text,
+        "stream": False,
+        "format": _AGENT_RESPONSE_SCHEMA,
+        "options": _AGENT_OPTIONS,
+    }
+    if has_vision:
+        payload["images"] = [screenshot_b64]
+
+    async def _do_post(client: httpx.AsyncClient) -> tuple[dict, float]:
+        t0 = time.monotonic()
+        response = await client.post(OLLAMA_GENERATE_URL, json=payload)
+        elapsed_ms = (time.monotonic() - t0) * 1000.0
+        response.raise_for_status()
+        return response.json(), elapsed_ms
+
+    try:
+        async with httpx.AsyncClient(timeout=_OLLAMA_TIMEOUT) as client:
+            body, elapsed_ms = await _do_post(client)
+    except httpx.ConnectError:
+        raise OllamaUnavailableError("Ollama is not running at localhost:11434")
+    except httpx.ReadTimeout:
+        raise OllamaUnavailableError("Ollama timed out generating a response — the model may be overloaded or too large for this hardware")
+    except httpx.RemoteProtocolError as exc:
+        raise OllamaUnavailableError(f"Ollama disconnected unexpectedly: {exc}")
+    except httpx.HTTPStatusError as exc:
+        raise OllamaUnavailableError(f"Ollama returned HTTP {exc.response.status_code}")
+
+    err_msg = _ollama_generate_error_message(body)
+    if err_msg:
+        raise OllamaUnavailableError(f"Ollama agent call failed: {err_msg}")
+
+    raw = body.get("response") or ""
+    logger.info(
+        "ollama agent ok model=%s elapsed_ms=%.1f chars=%s vision=%s",
+        chosen, round(elapsed_ms, 1), len(raw), has_vision,
+    )
+
+    if detect_hallucination(raw):
+        logger.warning("ollama agent hallucination detected (model=%s) — returning screenshot recovery", chosen)
+        return {
+            "thought": "Model output contained a repetition loop — taking a screenshot to reorient.",
+            "tool": "screenshot",
+            "params": {},
+            "display": "Taking a fresh look at the page...",
+            "_model": chosen,
+        }
+
+    def _fallback_get_sections() -> dict:
+        """Safe structural recovery: re-read the page instead of asking the user."""
+        return {
+            "thought": "Model response could not be parsed — re-reading page structure to recover.",
+            "tool": "get_sections",
+            "params": {},
+            "display": "Re-reading the page structure...",
+            "_model": chosen,
+        }
+
+    try:
+        result = extract_json(raw)
+        result["_model"] = chosen
+        return result
+    except (ValueError, json.JSONDecodeError):
+        # Retry with an explicit JSON reminder appended to the prompt
+        payload["prompt"] += "\n\nRespond with ONLY the JSON object described in the instructions. No other text."
+        try:
+            async with httpx.AsyncClient(timeout=_OLLAMA_TIMEOUT) as client:
+                body2, _ = await _do_post(client)
+            err2 = _ollama_generate_error_message(body2)
+            if err2:
+                raise OllamaUnavailableError(f"Ollama agent retry failed: {err2}")
+            raw2 = body2.get("response") or ""
+            result = extract_json(raw2)
+            result["_model"] = chosen
+            return result
+        except (ValueError, json.JSONDecodeError):
+            logger.warning("agent JSON parse failed after retry — falling back to get_sections")
+            return _fallback_get_sections()
+
+
+async def stream_agent_call(
+    system_prompt: str,
+    user_text: str,
+    screenshot_b64: Optional[str] = None,
+    model: Optional[str] = None,
+):
+    """
+    Async generator: streams raw token strings from Ollama's generate API.
+    Yields each non-empty token string as it arrives.
+    Raises OllamaUnavailableError on connection or model errors.
+    The caller accumulates tokens and parses the final JSON.
+    """
+    global _active_model, _model_detected
+    if not _model_detected:
+        _active_model = await _detect_best_model()
+        _model_detected = True
+
+    chosen = model or _active_model
+    has_vision = screenshot_usable(screenshot_b64)
+
+    payload: dict[str, Any] = {
+        "model": chosen,
+        "system": system_prompt,
+        "prompt": user_text,
+        "stream": True,
+        "format": _AGENT_RESPONSE_SCHEMA,
+        "options": _AGENT_OPTIONS,
+    }
+    if has_vision:
+        payload["images"] = [screenshot_b64]
+
+    t0 = time.monotonic()
+    accumulated_for_log = []
+    try:
+        async with httpx.AsyncClient(timeout=_OLLAMA_TIMEOUT) as client:
+            async with client.stream("POST", OLLAMA_GENERATE_URL, json=payload) as response:
+                if response.status_code != 200:
+                    raise OllamaUnavailableError(f"Ollama returned HTTP {response.status_code}")
+                async for raw_line in response.aiter_lines():
+                    if not raw_line:
+                        continue
+                    try:
+                        chunk = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
+                    if chunk.get("error"):
+                        raise OllamaUnavailableError(f"Ollama stream error: {chunk['error']}")
+                    token = chunk.get("response") or ""
+                    if token:
+                        accumulated_for_log.append(token)
+                        yield token
+                    if chunk.get("done"):
+                        elapsed_ms = (time.monotonic() - t0) * 1000.0
+                        full = "".join(accumulated_for_log)
+                        logger.info(
+                            "ollama stream done model=%s elapsed_ms=%.1f vision=%s chars=%d full=%r",
+                            chosen, round(elapsed_ms, 1), has_vision, len(full), full[:400],
+                        )
+                        return
+    except httpx.ConnectError:
+        raise OllamaUnavailableError("Ollama is not running at localhost:11434")
+    except httpx.ReadTimeout:
+        raise OllamaUnavailableError("Ollama stream timed out — the model may be overloaded or too large for this hardware")
+    except httpx.RemoteProtocolError as exc:
+        raise OllamaUnavailableError(f"Ollama stream disconnected: {exc}")
 
 
 async def call_ollama_text(
@@ -294,14 +531,17 @@ async def call_ollama_text(
         "prompt": user_text,
         "stream": False,
         "format": "json",
+        "options": _OLLAMA_OPTIONS,
     }
     try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
+        async with httpx.AsyncClient(timeout=_OLLAMA_TIMEOUT) as client:
             response = await client.post(OLLAMA_GENERATE_URL, json=payload)
             response.raise_for_status()
             body = response.json()
     except httpx.ConnectError:
         raise OllamaUnavailableError("Ollama is not running at localhost:11434")
+    except httpx.ReadTimeout:
+        raise OllamaUnavailableError("Ollama timed out generating a response — the model may be overloaded or too large for this hardware")
     except httpx.RemoteProtocolError as exc:
         raise OllamaUnavailableError(f"Ollama disconnected unexpectedly: {exc}")
     except httpx.HTTPStatusError as exc:

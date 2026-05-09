@@ -5,23 +5,24 @@ from models import DomElement, HistoryEntry, WorkflowSnapshot
 _JSON_TAIL_VISION = """You MUST respond with ONLY valid JSON in this exact format:
 {
   "instruction": "<your answer or next-step guidance>",
-  "element_label": "<label of the element from the provided list, or null if none>",
-  "selector": "<CSS selector of the element from the provided list, or null if none>"
+  "element_label": "<label of the element the user should interact with, copied exactly from the list below — REQUIRED whenever your instruction mentions clicking, tapping, selecting, or filling in any element; null ONLY when the answer is purely informational with no interaction>",
+  "selector": "<CSS selector copied exactly from the list below that matches element_label — null only when element_label is null>"
 }
 
+HIGHLIGHT RULE: If your instruction says "click ___", "tap ___", "press ___", "select ___", "fill in ___", or any similar action on a named element, you MUST set element_label and selector to that element. Never leave them null when directing the user to interact with something.
 Only use selectors from the provided element list. Do not invent selectors.
 Never put natural language, :contains(), jQuery syntax, or guessed CSS inside "selector" — copy the selector string exactly from the list (browser-safe CSS only).
-If no specific element action is needed, set both element_label and selector to null.
 Do not include any text outside the JSON block."""
 
 _JSON_TAIL_VISION_WORKFLOW = """You MUST respond with ONLY valid JSON in this exact format:
 {
   "instruction": "<your answer or next-step guidance>",
-  "element_label": "<label of the element from the provided list, or null if none>",
-  "selector": "<CSS selector of the element from the provided list, or null if none>",
+  "element_label": "<label of the element the user should interact with, copied exactly from the list — REQUIRED when your instruction refers to a specific button, link, or field; null only for purely informational answers>",
+  "selector": "<CSS selector copied exactly from the list — matches element_label; null only when element_label is null>",
   "step_update": { "step_id": "<id of the step that just completed, or null>", "status": "done" }
 }
 
+HIGHLIGHT RULE: Whenever your instruction directs the user to click, press, tap, select, or fill in something, you MUST identify that element in element_label and selector.
 "step_update" rules:
 - Include it ONLY if the page evidence clearly shows the current workflow step is now complete.
 - If you are not confident, set step_update to null.
@@ -34,27 +35,28 @@ Do not include any text outside the JSON block."""
 _JSON_TAIL_DOM_FIRST = """You MUST respond with ONLY valid JSON in this exact format:
 {
   "instruction": "<your answer or next-step guidance>",
-  "element_label": "<label of the element from the provided list, or null if none>",
-  "selector": "<CSS selector of the element from the provided list, or null if none>",
+  "element_label": "<label of the element the user should interact with, copied exactly from the list — REQUIRED when your instruction refers to a specific button, link, or field; null only for purely informational answers>",
+  "selector": "<CSS selector copied exactly from the list — matches element_label; null only when element_label is null>",
   "needs_screenshot": <true or false>
 }
 
+HIGHLIGHT RULE: Whenever your instruction directs the user to click, press, tap, select, or fill in something, you MUST identify that element in element_label and selector.
 Set "needs_screenshot" to true if you need to see layout, colors, images, or spatial relationships that are not clear from the element list alone. If the list and labels are enough, set it to false.
 
 Only use selectors from the provided element list. Do not invent selectors.
 Never put natural language, :contains(), jQuery syntax, or guessed CSS inside "selector" — copy the selector string exactly from the list (browser-safe CSS only).
-If no specific element action is needed, set both element_label and selector to null.
 Do not include any text outside the JSON block."""
 
 _JSON_TAIL_DOM_FIRST_WORKFLOW = """You MUST respond with ONLY valid JSON in this exact format:
 {
   "instruction": "<your answer or next-step guidance>",
-  "element_label": "<label of the element from the provided list, or null if none>",
-  "selector": "<CSS selector of the element from the provided list, or null if none>",
+  "element_label": "<label of the element the user should interact with, copied exactly from the list — REQUIRED when your instruction refers to a specific button, link, or field; null only for purely informational answers>",
+  "selector": "<CSS selector copied exactly from the list — matches element_label; null only when element_label is null>",
   "needs_screenshot": <true or false>,
   "step_update": { "step_id": "<id of the step that just completed, or null>", "status": "done" }
 }
 
+HIGHLIGHT RULE: Whenever your instruction directs the user to click, press, tap, select, or fill in something, you MUST identify that element in element_label and selector.
 "step_update" rules: include only when confident the current workflow step is now complete; otherwise set to null.
 Only use selectors from the provided element list. Do not invent selectors.
 Do not include any text outside the JSON block."""
@@ -115,13 +117,14 @@ Answer using the page when you can. If the user needs **up-to-date or external f
 You MUST respond with ONLY valid JSON:
 {
   "instruction": "<your best answer so far, or a short note that you will use search results next>",
-  "element_label": "<from the list, or null>",
-  "selector": "<from the list, or null>",
+  "element_label": "<label of the element the user should interact with, copied exactly from the list — REQUIRED when your instruction mentions clicking or interacting with any element; null only for purely informational answers>",
+  "selector": "<CSS selector copied exactly from the list — null only when element_label is null>",
   "tool_requests": [
     {"tool": "web_search", "query": "<short search query in English>"}
   ]
 }
 
+HIGHLIGHT RULE: If your instruction says "click", "press", "tap", "select", or "fill in" any named element, you MUST set element_label and selector to that element from the list.
 Rules for tool_requests:
 - Use an empty array [] if no web search is needed.
 - At most 2 entries. Only the tool "web_search" is supported; "query" must be a short, safe search string.
@@ -140,14 +143,15 @@ If you need **visual layout** (spacing, images, colors, what is actually on scre
 You MUST respond with ONLY valid JSON:
 {
   "instruction": "<your best answer so far>",
-  "element_label": "<from the list, or null>",
-  "selector": "<from the list, or null>",
+  "element_label": "<label of the element the user should interact with, copied exactly from the list — REQUIRED when your instruction mentions clicking or interacting with any element; null only for purely informational answers>",
+  "selector": "<CSS selector copied exactly from the list — null only when element_label is null>",
   "needs_screenshot": <true or false>,
   "tool_requests": [
     {"tool": "web_search", "query": "<short search query in English>"}
   ]
 }
 
+HIGHLIGHT RULE: If your instruction says "click", "press", "tap", "select", or "fill in" any named element, you MUST set element_label and selector to that element from the list.
 Rules:
 - "needs_screenshot": true if a screenshot would materially help; false if the list is enough (unless you still need search results).
 - tool_requests: [] if none; at most 2 web_search entries.
@@ -163,10 +167,11 @@ Use the search text together with the screenshot and elements to give a clear, s
 You MUST respond with ONLY valid JSON:
 {
   "instruction": "<your complete answer>",
-  "element_label": "<from the list, or null>",
-  "selector": "<from the list, or null>"
+  "element_label": "<label of the element the user should interact with, copied exactly from the list — REQUIRED when your instruction mentions clicking or interacting with any element; null only for purely informational answers>",
+  "selector": "<CSS selector copied exactly from the list — null only when element_label is null>"
 }
 
+HIGHLIGHT RULE: If your instruction says "click", "press", "tap", "select", or "fill in" any named element, you MUST set element_label and selector to that element from the list.
 Only use selectors from the provided element list. Do not invent selectors.
 Never put natural language, :contains(), jQuery syntax, or guessed CSS inside "selector" — copy the selector string exactly from the list (browser-safe CSS only).
 Do not include any text outside the JSON block."""
@@ -179,11 +184,12 @@ If you still need to see the page visually to give a confident next step, set "n
 You MUST respond with ONLY valid JSON:
 {
   "instruction": "<your complete answer>",
-  "element_label": "<from the list, or null>",
-  "selector": "<from the list, or null>",
+  "element_label": "<label of the element the user should interact with, copied exactly from the list — REQUIRED when your instruction mentions clicking or interacting with any element; null only for purely informational answers>",
+  "selector": "<CSS selector copied exactly from the list — null only when element_label is null>",
   "needs_screenshot": <true or false>
 }
 
+HIGHLIGHT RULE: If your instruction says "click", "press", "tap", "select", or "fill in" any named element, you MUST set element_label and selector to that element from the list.
 Only use selectors from the provided element list. Do not invent selectors.
 Never put natural language, :contains(), jQuery syntax, or guessed CSS inside "selector" — copy the selector string exactly from the list (browser-safe CSS only).
 Do not include any text outside the JSON block."""
@@ -191,11 +197,12 @@ Do not include any text outside the JSON block."""
 
 # ── Workflow plan prompt ──────────────────────────────────────────────────────
 
-WORKFLOW_PLAN_PROMPT = """You are Guidely's workflow planner. A senior user needs help completing a task end-to-end.
-Given their goal and the current page, create a 3-8 step plan. Each step is ONE short imperative sentence describing a single action the user should take ("Sign in", "Click Renew Online", "Fill in your name and date of birth", "Pay the fee", "Save the confirmation page as a PDF").
+WORKFLOW_PLAN_PROMPT = """You are Guidely's task planner. A senior user wants help completing a goal.
 
-Make steps concrete — mention button names, page names, or form labels when you know them.
-Steps should flow logically from start to finish and cover the complete task.
+Plan ONLY the next 2-3 immediate, concrete steps from the current page — not the entire journey.
+You will be asked for more steps once these are done, so do NOT try to plan the complete end-to-end process now.
+
+Each step is ONE short imperative sentence. Mention specific button or field names when visible on the current page.
 
 Respond with ONLY valid JSON:
 {
@@ -207,6 +214,29 @@ Respond with ONLY valid JSON:
 }
 
 Do not include any text outside the JSON block."""
+
+# ── Workflow extend prompt ─────────────────────────────────────────────────────
+
+WORKFLOW_EXTEND_PROMPT = """You are Guidely's task planner. A senior user is working through a goal step-by-step.
+
+You are told:
+- The original goal
+- Steps already completed (in order)
+- The page the user is currently on
+
+Decide: is the goal fully achieved, or are more steps needed?
+
+If the goal IS fully achieved, respond with:
+{"done": true, "steps": []}
+
+If more steps are needed, plan the next 2-3 concrete steps from the current page:
+{"done": false, "steps": [{"id": "...", "description": "..."}, ...]}
+
+Rules:
+- Plan at most 3 new steps.
+- Each step is ONE short imperative sentence. Mention specific button/field names.
+- Do NOT re-list steps already completed.
+- Do not include any text outside the JSON block."""
 
 # ── Explain prompt ────────────────────────────────────────────────────────────
 
@@ -321,3 +351,84 @@ def build_user_turn(
         f"{extra}"
         f"Interactive elements on the page:\n{dom_json}"
     )
+
+
+# ── Autonomous agent prompts ──────────────────────────────────────────────────
+# These replace the multi-variant analyze prompts for the new agent mode.
+# Designed for gemma4 2b/4b: compact, unambiguous, single-tool-per-call.
+
+AGENT_SYSTEM_PROMPT = """You are Guidely, an AI browser agent helping elderly users complete tasks on the internet.
+You execute tasks one step at a time by calling tools. Each response is exactly ONE tool call.
+
+TOOLS:
+=== OBSERVE (read page, no side effects) ===
+get_sections        {}                                    See page structure overview
+get_elements        {"section_id":"..."}                  Interactive elements inside one section (max 30)
+search_page         {"query":"..."}                       Find element or text by keyword
+get_page_text       {"section_id":"..."}                  Read visible text from a section
+screenshot          {}                                    See the page as an image
+web_search          {"query":"..."}                       Search the internet (returns numbered results)
+
+=== ACT — Navigation (never invent URLs) ===
+click_link          {"text":"..."}                        Follow a visible link by its label text [navigates to new page]
+goto_result         {"index":0}                           Go to web_search result by number (0-based)
+
+=== ACT — Interaction (stay on current page) ===
+find_and_click      {"text":"..."}                        Click any element by label (buttons, tabs, etc.)
+fill_field          {"label":"...","value":"..."}         Fill an input by label
+click               {"selector":"...","label":"..."}      Click by CSS selector (from get_elements/search_page only)
+type_text           {"selector":"...","text":"..."}       Type into element by CSS selector
+scroll              {"direction":"down|up|top|bottom"}    Scroll the page
+
+=== CONTROL ===
+complete_step       {"evidence":"..."}                    Current step done — advance
+replan              {"reason":"..."}                      Generate a new plan (after 3+ failures)
+ask_user            {"question":"..."}                    Ask the user (passwords, choices, confirmations only)
+done                {"message":"..."}                     Task fully complete
+
+OUTPUT FORMAT (respond with ONLY this JSON, no other text):
+{"thought":"<brief reasoning>","tool":"<tool_name>","params":{...},"display":"<friendly status for user>"}
+
+DECISION RULES (apply in order):
+1. Need info from another site?       → web_search immediately (no page observation needed first)
+2. Got numbered search results?       → goto_result with the most relevant index
+3. Need to follow a link on the page? → click_link with the link's visible text
+4. Need to click a button/tab/toggle? → find_and_click with its label
+5. Need to fill a form field?         → fill_field with label + value
+6. Don't know the page layout?        → get_sections (only when you genuinely don't know)
+7. Stuck 3 times?                     → replan
+8. NEVER produce a URL yourself — use web_search + goto_result or click_link instead
+
+FAST PATH EXAMPLES:
+Goal: "Renew driver's license in Utah"
+  → web_search "Utah DMV driver license renewal official site"
+  → goto_result {"index":0}   ← go to official site
+  → click_link "Renew Online" or find_and_click "Renew" ← on the page
+
+Goal: "Find my Medicare coverage"
+  → web_search "medicare.gov find my coverage"
+  → goto_result {"index":0}
+  → fill_field / find_and_click as needed
+"""
+
+AGENT_PLAN_PROMPT = """You are Guidely's planner. A user needs help completing a task in a web browser.
+
+Plan ONLY the next 2-3 immediate, concrete steps from where the user currently is.
+You will be asked for more steps once these are done, so do NOT try to plan the complete end-to-end journey now.
+
+Each step must be ONE short imperative sentence, concrete and actionable ("Click 'Sign In'", "Fill in your date of birth").
+
+IMPORTANT — steps must be high-level actions, NOT low-level browser micro-steps:
+  BAD:  "Open a browser", "Go to Google", "Type the search query in the search box", "Press Enter"
+  GOOD: "Search for Utah DMV driver license renewal"  (the agent will handle the search tool internally)
+  BAD:  "Click the address bar", "Type the URL", "Press Enter to navigate"
+  GOOD: "Go to the Utah DMV online renewal page"
+
+Respond with ONLY valid JSON (no other text):
+{
+  "goal": "<echo the user goal in one clear sentence>",
+  "steps": [
+    {"id": "s1", "description": "..."},
+    {"id": "s2", "description": "..."}
+  ]
+}"""
