@@ -390,6 +390,25 @@ OUTPUT FORMAT (respond with ONLY this JSON, no other text):
 {"thought":"<brief reasoning>","tool":"<tool_name>","params":{...},"display":"<friendly status for user>"}
 
 DECISION RULES (apply in order):
+0. MISSING REQUIRED DETAILS — check this FIRST, before any browsing:
+   Some tasks cannot be completed without specific information from the user.
+   If the goal is ambiguous or requires details you do not have yet (see categories below),
+   your VERY FIRST tool call MUST be ask_user with a clear, friendly question.
+   DO NOT start browsing, searching, or planning until you have the required details.
+
+   CATEGORIES that require clarification before starting:
+   - BOOKING / RESERVATION (flights, hotels, restaurants, doctors, services):
+       Required: destination, origin, travel dates, number of passengers / guests, class / room type.
+       Example question: "To search for flights I need a few details: Where are you flying from and to? What dates would you like to travel, and how many passengers?"
+   - SHOPPING / PURCHASE:
+       Required: product name/model, quantity, size/colour/variant if relevant.
+   - ACCOUNT / PROFILE ACTIONS (email, contact, address change):
+       Required: the new value (new email, new address, new phone number).
+   - SEARCH THAT NEEDS A NAME / DATE / LOCATION:
+       If the goal says "find my …", "check my …", or "book a … near me", ask for the missing specifics.
+
+   If the conversation history already contains the answer to a required detail, do NOT ask again — use the provided value instead.
+
 1. Need info from another site?       → web_search immediately (no page observation needed first)
 2. Got numbered search results?       → goto_result with the most relevant index
 3. Need to follow a link on the page? → click_link with the link's visible text

@@ -703,6 +703,36 @@ export async function respondToUserQuestion(conversationId, answer, callbacks = 
   await _runLoop(conversationId, callbacks, { screenshot: null, observation: answerObs });
 }
 
+/**
+ * Continue an existing conversation after the agent has become idle.
+ *
+ * This covers two cases:
+ *   1. The agent called `done` but the user sends a follow-up message.
+ *   2. The original goal was too vague (e.g. "book a flight") and the agent
+ *      asked a clarifying question; the user's reply is now in `userMessage`.
+ *
+ * The follow-up is appended to the persistent chat history so the model can
+ * see it in `chat_history` on the very next step. Then the loop restarts with
+ * the same plan and goal, giving the model full conversational context.
+ */
+export async function continueAgentLoop(conversationId, userMessage, callbacks = {}) {
+  if (_loopRunning) return;
+  const session = await store.getAgentSession(conversationId);
+  if (!session) return;
+
+  // Only re-enter when idle (task finished or clarification needed).
+  if (session.status !== 'idle') return;
+
+  await store.setAgentStatus(conversationId, 'running');
+
+  // Surface the user's message as an observation so the LLM sees it immediately.
+  const obs = {
+    type: 'action_result', tool: 'ask_user', success: true,
+    details: `User follow-up: "${String(userMessage).slice(0, 200)}"`,
+  };
+  await _runLoop(conversationId, callbacks, { screenshot: null, observation: obs });
+}
+
 // ── Core loop ─────────────────────────────────────────────────────────────────
 
 async function _runLoop(conversationId, callbacks = {}, initial = {}) {
@@ -753,6 +783,12 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
       let response = null;
       let streamError = null;
 
+      // Gather the last 10 chat messages to give the model conversational context.
+      const chatHistory = (conv.messages || [])
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .slice(-10)
+        .map((m) => ({ role: m.role, content: String(m.content).slice(0, 2000) }));
+
       await agentStepStream(
         {
           goal: plan.goal,
@@ -769,6 +805,7 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
           observation: currentObservation,
           retryCount: session.retryCount || 0,
           loopIteration: callCount,
+          chatHistory,
         },
         {
           onThinking: () => { /* bubble already shown */ },
@@ -819,7 +856,8 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
       if (tool === 'done') {
         markToolDone();
         const msg = String(params?.message || 'Task complete!');
-        await store.setAgentStatus(conversationId, 'done');
+        // Use 'idle' instead of 'done' so the user can send a follow-up message.
+        await store.setAgentStatus(conversationId, 'idle');
         onMessage?.({ role: 'assistant', content: msg });
         onDone?.();
         break;
@@ -887,7 +925,8 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
 
           if (!extended) {
             const msg = 'All done! The task is complete.';
-            await store.setAgentStatus(conversationId, 'done');
+            // Use 'idle' so the user can ask follow-up questions without starting a new session.
+            await store.setAgentStatus(conversationId, 'idle');
             onMessage?.({ role: 'assistant', content: msg });
             onDone?.();
             break;
@@ -1100,9 +1139,9 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
 
     if (callCount >= MAX_LOOP_CALLS) {
       const msg =
-        'I stopped after many steps so this session does not run forever. You can start a new chat or tell me what to do next on this page.';
+        'I stopped after many steps to avoid running forever. Tell me what to do next and I\'ll continue.';
       onMessage?.({ role: 'assistant', content: msg });
-      await store.setAgentStatus(conversationId, 'done');
+      await store.setAgentStatus(conversationId, 'idle');
       onDone?.();
     }
   } finally {

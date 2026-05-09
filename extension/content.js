@@ -133,7 +133,14 @@ async function handleUserInput({ conversationId, text }) {
   // Case 2: Agent is already running (shouldn't normally reach here).
   if (session?.status === 'running') return;
 
-  // Case 3: Fresh goal — start the agent loop.
+  // Case 3: Agent is idle (finished a task or waiting for clarification) — continue the conversation.
+  // This lets users answer follow-up questions or give additional context without starting fresh.
+  if (session?.status === 'idle' && session?.toolHistory?.length > 0) {
+    await _agentLoop.continueAgentLoop(conversationId, displayText, _makeCallbacks(conversationId));
+    return;
+  }
+
+  // Case 4: Fresh goal — start the agent loop.
   if (!displayText || displayText === '(What should I do here?)') {
     _sidebar.appendLiveMessage({ role: 'system', content: "Please tell me what you'd like help with." });
     return;
@@ -167,7 +174,7 @@ function _makeCallbacks(conversationId) {
       _store.appendMessage(conversationId, message).catch(() => {});
     },
     onDone() {
-      _sidebar.setAgentStatus('done');
+      _sidebar.setAgentStatus('idle');
       clearHighlight();
     },
     onError(msg) {

@@ -185,6 +185,12 @@ class AgentStartResponse(BaseModel):
     plan: dict  # { goal: str, steps: [{id, description}] }
 
 
+class ChatTurn(BaseModel):
+    """One user or assistant turn from the persistent conversation thread."""
+    role: Literal["user", "assistant"]
+    content: str = Field(..., max_length=2000)
+
+
 class AgentStepRequest(BaseModel):
     goal: str = Field(..., max_length=500)
     plan: AgentPlanIn
@@ -203,6 +209,9 @@ class AgentStepRequest(BaseModel):
     conversation_id: Optional[str] = Field(None, max_length=128)
     # How many agent loop iterations have run (1-based from client). Used to cap endless exploration.
     loop_iteration: int = Field(0, ge=0, le=500)
+    # Last N user/assistant turns from the persistent chat thread — gives the model
+    # conversational context (e.g. clarifying answers, follow-ups) across loop restarts.
+    chat_history: List[ChatTurn] = Field(default_factory=list, max_length=20)
 
     @field_validator("screenshot", mode="before")
     @classmethod

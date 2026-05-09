@@ -239,6 +239,16 @@ def _build_agent_context(request: AgentStepRequest) -> str:
         lines.append(f"[Current step retried {request.retry_count}× — consider replan if stuck]")
     lines.append("")
 
+    # Conversation history — lets the model see clarifying answers and follow-ups.
+    history = getattr(request, "chat_history", None) or []
+    if history:
+        lines.append("Conversation so far:")
+        for turn in history[-6:]:  # last 6 turns to keep context compact
+            prefix = "User" if turn.role == "user" else "Assistant"
+            content = str(turn.content)[:300]
+            lines.append(f"  {prefix}: {content}")
+        lines.append("")
+
     # Rolling tool history (last 2 calls, each compressed to one line)
     if request.last_tool_calls:
         lines.append("Recent actions:")
