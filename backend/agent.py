@@ -239,13 +239,42 @@ def _build_agent_context(request: AgentStepRequest) -> str:
         lines.append(f"[Current step retried {request.retry_count}× — consider replan if stuck]")
     lines.append("")
 
-    # Rolling tool history (last 2 calls, each compressed to one line)
+    # Conversation history — lets the model see clarifying answers and follow-ups.
+    history = getattr(request, "chat_history", None) or []
+    if history:
+        lines.append("Conversation so far:")
+        for turn in history[-6:]:  # last 6 turns to keep context compact
+            prefix = "User" if turn.role == "user" else "Assistant"
+            content = str(turn.content)[:300]
+            lines.append(f"  {prefix}: {content}")
+        lines.append("")
+
+    # Rolling tool history (last 3 calls, each compressed to one line)
     if request.last_tool_calls:
         lines.append("Recent actions:")
-        for tc in request.last_tool_calls[-2:]:
+        for tc in request.last_tool_calls[-3:]:
             result_str = _compress_result(tc.result)
             lines.append(f"  {tc.tool}({_compact_params(tc.params)}) → {result_str}")
         lines.append("")
+
+        # Detect when the model is spinning on the same observation tool with the
+        # same arguments — warn it explicitly so it stops repeating and acts.
+        _OBS_TOOLS = {"get_page_text", "get_elements", "get_sections", "search_page"}
+        recent = request.last_tool_calls[-3:]
+        if len(recent) >= 2:
+            keys = [
+                f"{tc.tool}:{_compact_params(tc.params)}"
+                for tc in recent
+                if tc.tool in _OBS_TOOLS
+            ]
+            if len(keys) >= 2 and len(set(keys)) == 1:
+                lines.append(
+                    f"WARNING: You have called {recent[-1].tool}({_compact_params(recent[-1].params)}) "
+                    "multiple times in a row and received the same result. "
+                    "Do NOT call it again. Either summarise what you have observed and call done, "
+                    "or try a DIFFERENT tool or section."
+                )
+                lines.append("")
 
     # Latest observation
     if request.observation:
@@ -282,6 +311,11 @@ async def run_agent_start(request: AgentStartRequest) -> AgentStartResponse:
     """
     Generate a step-by-step plan for the given goal.
     Uses the active model (text-only; no vision needed for planning).
+
+    If the planner returns {"needs_clarification": true, "question": "..."} the
+    backend synthesises a one-step plan whose single step is ask_user, so the
+    agent loop fires the clarifying question on the very first iteration instead
+    of wandering around booking sites for a dozen steps.
     """
     parts: list[str] = [f"Goal: {request.goal}"]
     if request.page_url:
@@ -299,6 +333,23 @@ async def run_agent_start(request: AgentStartRequest) -> AgentStartResponse:
     except (ValueError, Exception) as exc:
         logger.warning("agent/start plan parse failed: %s | raw=%s", exc, raw[:300])
         raise ValueError("Model returned an unparseable plan. Please try again.")
+
+    # Planner signalled that required details are missing — synthesise a
+    # one-step plan so the loop immediately calls ask_user on iteration 1.
+    if parsed.get("needs_clarification"):
+        question = str(parsed.get("question") or (
+            "Before I start, I need a few details. Could you tell me the "
+            "specific dates and any other information needed for this task?"
+        ))[:500]
+        logger.info("agent/start needs_clarification — injecting ask_user step")
+        return AgentStartResponse(
+            plan={
+                "goal": request.goal[:500],
+                "steps": [{"id": "s1", "description": f"ask_user: {question}"}],
+                # Embed the question so the step loop can surface it directly.
+                "clarification_question": question,
+            }
+        )
 
     steps_raw = parsed.get("steps") or []
     steps = [
