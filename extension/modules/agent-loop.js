@@ -641,7 +641,9 @@ export async function runSummarize(conversationId, userQuestion, callbacks = {})
   onMessage?.({ role: 'system', content: 'Reading what\'s on your screen…' });
 
   const { screenshot } = await _autoCapture();
-  const pageText = (document.body?.innerText || '').slice(0, 8000);
+  const pageText = (document.body?.innerText || '')
+    .replace(/[\uD800-\uDFFF]/g, '')
+    .slice(0, 8000);
 
   try {
     const result = await summarizePage({
@@ -688,11 +690,22 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
 
   // Build a flat element list from every section so the model has real CSS
   // selectors to choose from — same data the autonomous agent uses for clicking.
+  // Exclude Guidely's own sidebar elements (they live inside #g-sidebar).
+  const sidebarEl = document.getElementById('g-sidebar');
   const allElements = [];
   for (const sec of (sections?.sections || [])) {
     const secElements = getElementsInSection(sec.id);
     for (const el of (secElements?.elements || [])) {
-      allElements.push(el);
+      // Skip elements that belong to Guidely's own UI.
+      try {
+        const node = document.querySelector(el.selector);
+        if (node && sidebarEl && sidebarEl.contains(node)) continue;
+      } catch { /* bad selector — keep it */ }
+      // Strip surrogate characters that would break UTF-8 encoding.
+      const safeLabel = (el.label || '').replace(/[\uD800-\uDFFF]/g, '');
+      const safeSelector = (el.selector || '').replace(/[\uD800-\uDFFF]/g, '');
+      if (!safeLabel && !safeSelector) continue;
+      allElements.push({ ...el, label: safeLabel, selector: safeSelector });
       if (allElements.length >= 60) break;
     }
     if (allElements.length >= 60) break;
@@ -701,7 +714,7 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
   // Format as a numbered list so the model can reference items by selector.
   const domMap = allElements.length > 0
     ? allElements.map((el, i) =>
-        `${i + 1}. [${el.tag}] "${el.label}" — selector: ${el.selector}`
+        `${i + 1}. [${el.tag}] "${el.label}" \u2014 selector: ${el.selector}`
       ).join('\n')
     : '(no interactive elements found)';
 

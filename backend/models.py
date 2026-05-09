@@ -266,6 +266,11 @@ class SummarizeRequest(BaseModel):
             return v
         return None
 
+    @field_validator("page_text", "page_url", "page_title", "user_question", mode="before")
+    @classmethod
+    def sanitize_unicode(cls, v: Any) -> Optional[str]:
+        return _strip_surrogates(v)
+
 
 class SummarizeResponse(BaseModel):
     summary: str
@@ -273,6 +278,15 @@ class SummarizeResponse(BaseModel):
 
 
 # ── Guide mode (highlight-only mode) ─────────────────────────────────────────
+
+def _strip_surrogates(v: Any) -> Optional[str]:
+    """Remove lone surrogate characters that are invalid UTF-8."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        return None
+    return v.encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
+
 
 class GuideModeRequest(BaseModel):
     """
@@ -294,6 +308,11 @@ class GuideModeRequest(BaseModel):
         if isinstance(v, str):
             return v
         return None
+
+    @field_validator("dom_summary", "page_url", "page_title", "user_question", mode="before")
+    @classmethod
+    def sanitize_unicode(cls, v: Any) -> Optional[str]:
+        return _strip_surrogates(v)
 
 
 class GuideModeResponse(BaseModel):
