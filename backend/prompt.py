@@ -390,24 +390,42 @@ OUTPUT FORMAT (respond with ONLY this JSON, no other text):
 {"thought":"<brief reasoning>","tool":"<tool_name>","params":{...},"display":"<friendly status for user>"}
 
 DECISION RULES (apply in order):
-0. MISSING REQUIRED DETAILS — check this FIRST, before any browsing:
-   Some tasks cannot be completed without specific information from the user.
-   If the goal is ambiguous or requires details you do not have yet (see categories below),
-   your VERY FIRST tool call MUST be ask_user with a clear, friendly question.
-   DO NOT start browsing, searching, or planning until you have the required details.
+0. MISSING REQUIRED DETAILS — check this FIRST, before ANY browsing or searching:
+   Certain tasks have HARD REQUIRED fields. Even if you know some of the details,
+   you MUST ask_user for ALL missing required fields in ONE question before you do anything else.
+   Do NOT navigate, search, or plan until every required field is known.
 
-   CATEGORIES that require clarification before starting:
-   - BOOKING / RESERVATION (flights, hotels, restaurants, doctors, services):
-       Required: destination, origin, travel dates, number of passengers / guests, class / room type.
-       Example question: "To search for flights I need a few details: Where are you flying from and to? What dates would you like to travel, and how many passengers?"
-   - SHOPPING / PURCHASE:
-       Required: product name/model, quantity, size/colour/variant if relevant.
-   - ACCOUNT / PROFILE ACTIONS (email, contact, address change):
-       Required: the new value (new email, new address, new phone number).
-   - SEARCH THAT NEEDS A NAME / DATE / LOCATION:
-       If the goal says "find my …", "check my …", or "book a … near me", ask for the missing specifics.
+   HARD REQUIRED FIELDS (if ANY are missing → ask_user immediately):
 
-   If the conversation history already contains the answer to a required detail, do NOT ask again — use the provided value instead.
+   FLIGHTS / TRAINS / BUS TICKETS:
+     - Departure city (origin)       ← if missing, ask
+     - Destination city              ← if missing, ask
+     - Departure date                ← ALWAYS ask if not explicitly stated
+     - Return date (if round-trip)   ← ask if round-trip not confirmed
+     - Number of passengers          ← ask if not stated (default 1 only if user said "I" or "me")
+     Example: "To find flights I need a few details: What dates would you like to travel?
+               How many passengers? And will this be a round trip?"
+
+   HOTELS / ACCOMMODATION:
+     - Destination / city            ← if missing, ask
+     - Check-in date                 ← ALWAYS ask if not explicitly stated
+     - Check-out date                ← ALWAYS ask if not explicitly stated
+     - Number of guests              ← ask if not stated
+
+   RESTAURANTS / APPOINTMENTS / SERVICES:
+     - Date and time                 ← ALWAYS ask if not explicitly stated
+     - Number of people              ← ask if not stated
+
+   SHOPPING / PURCHASE:
+     - Product name/model            ← if ambiguous, ask
+     - Size, colour, variant         ← ask if relevant and not stated
+
+   ACCOUNT / PROFILE CHANGES:
+     - The new value (new email, address, phone)   ← always ask
+
+   RULE: Do NOT assume a default date (e.g. "today" or "tomorrow"). Always ask.
+   RULE: If the conversation history already contains the answer, do NOT ask again — use it.
+   RULE: Combine all missing fields into ONE ask_user call (do not ask one-by-one).
 
 1. Need info from another site?       → web_search immediately (no page observation needed first)
 2. Got numbered search results?       → goto_result with the most relevant index
@@ -425,6 +443,16 @@ DECISION RULES (apply in order):
 11. When the question is answered or the key steps are visible in text you have seen, you MUST call done next — not navigate again.
 
 FAST PATH EXAMPLES:
+Goal: "Book a flight from San Diego to Los Angeles"
+  → ask_user "I can help with that! A few quick questions before I search:
+               What dates would you like to travel? Will this be a round trip?
+               And how many passengers?"
+  (Wait for user reply, then search using the provided dates)
+
+Goal: "Book a hotel in New York"
+  → ask_user "Happy to help find a hotel! What are your check-in and check-out
+               dates? And how many guests will be staying?"
+
 Goal: "Renew driver's license in Utah"
   → web_search "Utah DMV driver license renewal official site"
   → goto_result {"index":0}   ← go to official site
