@@ -399,22 +399,46 @@ const SIDEBAR_CSS = `
   }
   #g-textarea:focus { outline: none; border-color: #FF6B35; box-shadow: 0 0 0 3px rgba(255,107,53,0.12); }
   #g-textarea:disabled { background: #f5f5f5; color: #999; }
-  #g-send {
-    padding: 10px 18px;
-    font-size: 14px;
+  .g-mode-btns {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .g-mode-btn {
+    flex: 1;
+    padding: 8px 6px;
+    font-size: 13px;
     font-weight: 600;
-    color: #fff;
-    background: #FF6B35;
-    border: none;
-    border-radius: 12px;
+    color: #555;
+    background: #f5f5f5;
+    border: 1.5px solid #ddd;
+    border-radius: 10px;
     cursor: pointer;
     font-family: inherit;
-    white-space: nowrap;
-    transition: background 0.15s;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    line-height: 1.3;
+    text-align: center;
   }
-  #g-send:hover:not(:disabled) { background: #e05a28; }
-  #g-send:disabled { background: #ccc; cursor: not-allowed; }
-  .g-hint { font-size: 11px; color: #bbb; margin: 6px 0 0; text-align: right; }
+  .g-mode-btn:hover:not(:disabled) {
+    background: #fff2ed;
+    border-color: #FF6B35;
+    color: #FF6B35;
+  }
+  .g-mode-btn.g-mode-primary {
+    background: #FF6B35;
+    color: #fff;
+    border-color: #FF6B35;
+  }
+  .g-mode-btn.g-mode-primary:hover:not(:disabled) {
+    background: #e05a28;
+    border-color: #e05a28;
+    color: #fff;
+  }
+  .g-mode-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .g-hint { font-size: 11px; color: #bbb; margin: 6px 0 0; text-align: center; }
 
   /* ── Close button ── */
   #g-close {
@@ -509,15 +533,15 @@ export async function mountSidebar({ onSubmit } = {}) {
   if (!active) active = await store.createConversation();
   _activeConvId = active.id;
 
-  // Mount simplified composer (no mode/autonomy selector).
+  // Mount composer with three mode buttons.
   const composerRoot = sidebar.querySelector('#g-composer');
   _composerCtl = mountComposer(composerRoot, {
-    onSend: async (text) => {
+    onSend: async ({ text, mode } = {}) => {
       const curActive = await store.getActive();
       if (!curActive) return;
       _composerCtl.setDisabled(true);
       try {
-        await onSubmit?.({ conversationId: curActive.id, text });
+        await onSubmit?.({ conversationId: curActive.id, text, mode: mode || 'autonomous' });
       } finally {
         _composerCtl.setDisabled(false);
         _composerCtl.focus();

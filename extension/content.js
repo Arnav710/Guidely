@@ -110,7 +110,7 @@ async function loadModules() {
 
 // ── User input handler ────────────────────────────────────────────────────────
 
-async function handleUserInput({ conversationId, text }) {
+async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
   clearHighlight();
 
   // Persist the user's message immediately so it appears in the thread.
@@ -124,7 +124,7 @@ async function handleUserInput({ conversationId, text }) {
 
   const session = await _store.getAgentSession(conversationId);
 
-  // Case 1: Agent is paused waiting for user input — resume with answer.
+  // Case 1: Agent is paused waiting for user input — always resume with answer regardless of mode.
   if (session?.status === 'paused' && session.pendingUserQuestion) {
     await _agentLoop.respondToUserQuestion(conversationId, displayText, _makeCallbacks(conversationId));
     return;
@@ -133,19 +133,30 @@ async function handleUserInput({ conversationId, text }) {
   // Case 2: Agent is already running (shouldn't normally reach here).
   if (session?.status === 'running') return;
 
-  // Case 3: Agent is idle (finished a task or waiting for clarification) — continue the conversation.
-  // This lets users answer follow-up questions or give additional context without starting fresh.
-  if (session?.status === 'idle' && session?.toolHistory?.length > 0) {
-    await _agentLoop.continueAgentLoop(conversationId, displayText, _makeCallbacks(conversationId));
-    return;
-  }
-
-  // Case 4: Fresh goal — start the agent loop.
   if (!displayText || displayText === '(What should I do here?)') {
     _sidebar.appendLiveMessage({ role: 'system', content: "Please tell me what you'd like help with." });
     return;
   }
 
+  // Case 3: Summarize mode — one-shot, no browsing.
+  if (mode === 'summarize') {
+    await _agentLoop.runSummarize(conversationId, displayText, _makeCallbacks(conversationId));
+    return;
+  }
+
+  // Case 4: Guide mode — highlight only, no clicking.
+  if (mode === 'guide') {
+    await _agentLoop.runGuideMode(conversationId, displayText, highlightElement, _makeCallbacks(conversationId));
+    return;
+  }
+
+  // Case 5: Agent is idle (finished a task) — continue conversation in autonomous mode.
+  if (session?.status === 'idle' && session?.toolHistory?.length > 0) {
+    await _agentLoop.continueAgentLoop(conversationId, displayText, _makeCallbacks(conversationId));
+    return;
+  }
+
+  // Case 6: Fresh autonomous goal — start the agent loop.
   await _agentLoop.startAgentLoop(conversationId, displayText, _makeCallbacks(conversationId));
 }
 

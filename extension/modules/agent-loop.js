@@ -17,7 +17,7 @@
  */
 
 import * as store from './conversation-store.js';
-import { agentStart, agentStepStream, extendWorkflow } from './api.js';
+import { agentStart, agentStepStream, extendWorkflow, summarizePage, guideMode } from './api.js';
 
 // Safety ceiling: stop the loop after this many tool calls to prevent infinite loops.
 // Backend also forces `done` around iteration 18 when `loop_iteration` is sent.
@@ -622,6 +622,101 @@ function _wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 // ── Agent loop public API ─────────────────────────────────────────────────────
 
+// ── Summarize mode (one-shot) ─────────────────────────────────────────────────
+
+/**
+ * Take a fresh screenshot + extract visible text → ask backend to summarize.
+ * No loop, no planning — one request in, one plain-English response out.
+ *
+ * @param {string} conversationId
+ * @param {string} userQuestion  What the user asked ("summarize what I see", etc.)
+ * @param {{ onMessage, onDone, onError, onStatusChange }} callbacks
+ */
+export async function runSummarize(conversationId, userQuestion, callbacks = {}) {
+  const { onMessage, onDone, onError, onStatusChange } = callbacks;
+  if (_loopRunning) return;
+
+  await store.setAgentStatus(conversationId, 'running');
+  onStatusChange?.('running');
+  onMessage?.({ role: 'system', content: 'Reading what\'s on your screen…' });
+
+  const { screenshot } = await _autoCapture();
+  const pageText = (document.body?.innerText || '').slice(0, 8000);
+
+  try {
+    const result = await summarizePage({
+      screenshot,
+      pageText,
+      pageUrl: window.location.href,
+      pageTitle: document.title,
+      userQuestion,
+    });
+    const summary = result?.summary || 'I couldn\'t read this page clearly. Please try again.';
+    onMessage?.({ role: 'assistant', content: summary });
+  } catch (err) {
+    onError?.(`Couldn't summarize: ${err.message}`);
+    await store.setAgentStatus(conversationId, 'error');
+    onStatusChange?.('error');
+    return;
+  }
+
+  await store.setAgentStatus(conversationId, 'idle');
+  onDone?.();
+}
+
+// ── Guide mode (highlight-only) ───────────────────────────────────────────────
+
+/**
+ * Take a fresh screenshot + build a compact DOM map → ask backend to identify
+ * the one element the user should interact with → highlight it.
+ * No navigation, no clicking, no form filling.
+ *
+ * @param {string} conversationId
+ * @param {string} userQuestion  The user's goal ("where do I click to renew?", etc.)
+ * @param {Function} highlightFn  content.js highlightElement(selector, label)
+ * @param {{ onMessage, onDone, onError, onStatusChange }} callbacks
+ */
+export async function runGuideMode(conversationId, userQuestion, highlightFn, callbacks = {}) {
+  const { onMessage, onDone, onError, onStatusChange } = callbacks;
+  if (_loopRunning) return;
+
+  await store.setAgentStatus(conversationId, 'running');
+  onStatusChange?.('running');
+  onMessage?.({ role: 'system', content: 'Looking at your screen to find what you should click…' });
+
+  const { screenshot, sections } = await _autoCapture();
+  const domSummary = (sections?.sections || [])
+    .slice(0, 8)
+    .map((s) => `${s.label} (${s.element_count} elements)`)
+    .join('\n');
+
+  try {
+    const result = await guideMode({
+      screenshot,
+      pageUrl: window.location.href,
+      pageTitle: document.title,
+      domSummary,
+      userQuestion,
+    });
+
+    const instruction = result?.instruction || 'I couldn\'t identify the right element. Please try again.';
+    onMessage?.({ role: 'assistant', content: instruction });
+
+    // Highlight the identified element.
+    if (highlightFn && (result?.selector || result?.label)) {
+      highlightFn(result.selector || null, result.label || null);
+    }
+  } catch (err) {
+    onError?.(`Couldn't identify element: ${err.message}`);
+    await store.setAgentStatus(conversationId, 'error');
+    onStatusChange?.('error');
+    return;
+  }
+
+  await store.setAgentStatus(conversationId, 'idle');
+  onDone?.();
+}
+
 /**
  * Start a new agent loop for a goal.
  * 1. Calls /agent/start to generate a plan.
@@ -638,8 +733,11 @@ export async function startAgentLoop(conversationId, goal, callbacks = {}) {
   if (_loopRunning) return;
   await store.setAgentStatus(conversationId, 'running');
 
+  // Take a fresh screenshot before planning so the model sees current state.
+  const { screenshot: freshScreenshot, sections: freshSections } = await _autoCapture();
+
   // Seed plan with a compact page summary (first ~5 section labels).
-  const sections = getPageSections();
+  const sections = freshSections || getPageSections();
   const domSummary = sections.sections
     .slice(0, 5)
     .map((s) => `${s.label} (${s.element_count})`)
@@ -678,9 +776,8 @@ export async function startAgentLoop(conversationId, goal, callbacks = {}) {
 
   onMessage?.({ role: 'system', content: `Starting with ${planData.plan.steps.length} step${planData.plan.steps.length > 1 ? 's' : ''} — more will be planned as we go.` });
 
-  // Start the loop. Pass the page sections we already captured so the LLM
-  // immediately sees page structure without needing an extra get_sections call.
-  await _runLoop(conversationId, callbacks, { screenshot: null, observation: sections });
+  // Pass the fresh screenshot we captured pre-plan, plus the page sections.
+  await _runLoop(conversationId, callbacks, { screenshot: freshScreenshot || null, observation: sections });
 }
 
 /**
@@ -709,12 +806,15 @@ export async function respondToUserQuestion(conversationId, answer, callbacks = 
 
   await store.setAgentStatus(conversationId, 'running');
 
+  // Take a fresh screenshot so the model sees the current page state.
+  const { screenshot: freshScreenshot } = await _autoCapture();
+
   // Surface the user's reply as an action result so the LLM understands the answer.
   const answerObs = {
     type: 'action_result', tool: 'ask_user', success: true,
     details: `User replied: "${String(answer).slice(0, 200)}"`,
   };
-  await _runLoop(conversationId, callbacks, { screenshot: null, observation: answerObs });
+  await _runLoop(conversationId, callbacks, { screenshot: freshScreenshot || null, observation: answerObs });
 }
 
 /**
@@ -773,12 +873,15 @@ export async function continueAgentLoop(conversationId, userMessage, callbacks =
 
   await store.setAgentStatus(conversationId, 'running');
 
+  // Take a fresh screenshot so the model sees the current page state.
+  const { screenshot: freshScreenshot } = await _autoCapture();
+
   // Surface the user's message as an observation so the LLM sees it immediately.
   const obs = {
     type: 'action_result', tool: 'ask_user', success: true,
     details: `User follow-up: "${String(userMessage).slice(0, 200)}"`,
   };
-  await _runLoop(conversationId, callbacks, { screenshot: null, observation: obs });
+  await _runLoop(conversationId, callbacks, { screenshot: freshScreenshot || null, observation: obs });
 }
 
 // ── Core loop ─────────────────────────────────────────────────────────────────

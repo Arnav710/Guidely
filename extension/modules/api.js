@@ -244,6 +244,46 @@ export async function runExplain({ text, domainHint = 'generic' }) {
   return _post('/explain', { text, domain_hint: domainHint });
 }
 
+/**
+ * POST /summarize — one-shot: take screenshot + visible text → plain-English summary.
+ */
+export async function summarizePage({
+  screenshot = null,
+  pageText = '',
+  pageUrl = '',
+  pageTitle = '',
+  userQuestion = '',
+} = {}) {
+  const body = {
+    page_url: pageUrl || null,
+    page_title: pageTitle || null,
+    page_text: pageText ? pageText.slice(0, 8000) : null,
+    user_question: userQuestion || null,
+  };
+  if (screenshot && screenshot.length >= 80) body.screenshot = screenshot;
+  return _post('/summarize', body);
+}
+
+/**
+ * POST /guide — guide mode: identify the one thing the user should click.
+ */
+export async function guideMode({
+  screenshot = null,
+  pageUrl = '',
+  pageTitle = '',
+  domSummary = '',
+  userQuestion = '',
+} = {}) {
+  const body = {
+    page_url: pageUrl || null,
+    page_title: pageTitle || null,
+    dom_summary: domSummary || null,
+    user_question: userQuestion,
+  };
+  if (screenshot && screenshot.length >= 80) body.screenshot = screenshot;
+  return _post('/guide', body);
+}
+
 /** GET /health — backend liveness check. */
 export async function checkHealth() {
   try {
