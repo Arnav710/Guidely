@@ -2,23 +2,23 @@
  * composer.js — goal input area for the autonomous agent.
  *
  * UX:
- *   1. User types their question in the textarea.
- *   2. User selects a mode by clicking one of the three toggle buttons
- *      (they act like radio buttons — clicking selects, doesn't submit).
- *      Default selected mode is "autonomous" (Do it for me).
- *   3. User clicks the Send button (or presses Enter) to submit.
+ *   1. User types (or speaks via mic button) their question.
+ *   2. User selects a mode: Summarize | Do it for me | Guide me.
+ *   3. User clicks Send (or presses Enter) to submit.
  *
- * When the agent is paused waiting for user input (ask_user), the mode buttons
- * are hidden and the composer enters "reply" mode with a plain Send button.
+ * Speech-to-text: Web Speech API (SpeechRecognition) — Chrome built-in, no deps.
+ * Holding the mic button records; releasing sends automatically.
  */
 
 /**
  * Mount the composer into rootEl.
  * @param {HTMLElement} rootEl
- * @param {{ onSend }} opts  onSend receives { text, mode } where mode is 'summarize'|'autonomous'|'guide'
+ * @param {{ onSend }} opts  onSend receives { text, mode }
  * @returns {{ focus, setDisabled, setWaitingForAnswer }}
  */
 export function mountComposer(rootEl, { onSend } = {}) {
+  const hasSpeech = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+
   rootEl.innerHTML = `
     <div class="g-composer-row">
       <textarea
@@ -28,6 +28,7 @@ export function mountComposer(rootEl, { onSend } = {}) {
         placeholder="What do you need help with? (e.g. renew my license, pay my bill…)"
         aria-label="Message to Guidely"
       ></textarea>
+      ${hasSpeech ? '<button type="button" id="g-mic" aria-label="Speak" title="Hold to speak">🎤</button>' : ''}
       <button type="button" id="g-send" aria-label="Send">Send</button>
     </div>
     <div class="g-mode-btns" id="g-mode-btns" role="group" aria-label="Choose how Guidely should help">
@@ -46,6 +47,7 @@ export function mountComposer(rootEl, { onSend } = {}) {
 
   const ta = rootEl.querySelector('#g-textarea');
   const sendBtn = rootEl.querySelector('#g-send');
+  const micBtn = rootEl.querySelector('#g-mic');
   const modeBtns = rootEl.querySelector('#g-mode-btns');
   const hint = rootEl.querySelector('#g-composer-hint');
 
@@ -58,7 +60,6 @@ export function mountComposer(rootEl, { onSend } = {}) {
     });
   }
 
-  // Mode buttons only select — they do NOT submit.
   modeBtns.querySelectorAll('.g-mode-btn').forEach((btn) => {
     btn.addEventListener('click', () => _selectMode(btn.dataset.mode));
   });
@@ -79,6 +80,49 @@ export function mountComposer(rootEl, { onSend } = {}) {
     }
   });
 
+  // ── Speech-to-text ──────────────────────────────────────────────────────────
+  if (micBtn && hasSpeech) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new SR();
+    recognition.continuous = true;   // keep recording until explicitly stopped
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    let _listening = false;
+
+    function _setMicState(active) {
+      _listening = active;
+      micBtn.classList.toggle('g-mic-active', active);
+      micBtn.title = active ? 'Click to stop recording' : 'Click to start recording';
+      micBtn.textContent = active ? '⏹' : '🎤';
+      ta.placeholder = active
+        ? 'Listening…'
+        : 'What do you need help with? (e.g. renew my license, pay my bill…)';
+    }
+
+    recognition.onstart = () => _setMicState(true);
+
+    recognition.onresult = (e) => {
+      let full = '';
+      for (const result of e.results) {
+        full += result[0].transcript;
+      }
+      ta.value = full;
+    };
+
+    recognition.onend = () => _setMicState(false);
+    recognition.onerror = () => _setMicState(false);
+
+    micBtn.addEventListener('click', () => {
+      if (_listening) {
+        try { recognition.stop(); } catch { /* ignore */ }
+      } else {
+        ta.value = '';
+        try { recognition.start(); } catch { /* ignore */ }
+      }
+    });
+  }
+
   return {
     focus() { ta.focus(); },
 
@@ -86,17 +130,16 @@ export function mountComposer(rootEl, { onSend } = {}) {
       ta.disabled = v;
       sendBtn.disabled = v;
       sendBtn.textContent = v ? '…' : 'Send';
+      if (micBtn) micBtn.disabled = v;
       modeBtns.querySelectorAll('.g-mode-btn').forEach((b) => { b.disabled = v; });
     },
 
-    /** Switch the composer into "waiting for your answer" mode when the agent calls ask_user. */
     setWaitingForAnswer(waiting, question = '') {
       hint.dataset.waiting = waiting ? '1' : '';
       if (waiting) {
         ta.placeholder = question || 'Type your answer here…';
         hint.textContent = 'Type your reply and press Enter.';
         sendBtn.textContent = 'Reply';
-        // Hide mode selector — user is just answering a question.
         modeBtns.style.display = 'none';
       } else {
         ta.placeholder = 'What do you need help with? (e.g. renew my license, pay my bill…)';
