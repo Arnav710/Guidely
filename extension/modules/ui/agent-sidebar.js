@@ -416,6 +416,33 @@ const SIDEBAR_CSS = `
   #g-send:hover:not(:disabled) { background: #e05a28; }
   #g-send:disabled { background: #ccc; cursor: not-allowed; }
 
+  #g-mic {
+    flex-shrink: 0;
+    width: 38px;
+    height: 38px;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 10px;
+    background: #f5f5f5;
+    cursor: pointer;
+    font-size: 17px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s, border-color 0.12s;
+    user-select: none;
+  }
+  #g-mic:hover:not(:disabled) { background: #fff2ed; border-color: #FF6B35; }
+  #g-mic.g-mic-active {
+    background: #FF6B35;
+    border-color: #FF6B35;
+    animation: g-mic-pulse 0.8s ease-in-out infinite;
+  }
+  #g-mic:disabled { opacity: 0.4; cursor: not-allowed; }
+  @keyframes g-mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,107,53,0.4); }
+    50%       { box-shadow: 0 0 0 6px rgba(255,107,53,0); }
+  }
+
   .g-mode-btns {
     display: flex;
     gap: 6px;

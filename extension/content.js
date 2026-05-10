@@ -54,6 +54,29 @@ function injectBtnStyles() {
 let _highlightTarget = null;
 let _highlightTimer = null;
 
+// ── Text-to-speech ────────────────────────────────────────────────────────────
+
+const _tts = window.speechSynthesis;
+
+function _speak(text) {
+  if (!_tts) return;
+  _tts.cancel(); // stop any current speech before starting new
+  if (!text?.trim()) return;
+  // Strip markdown-ish symbols so they aren't read aloud.
+  const clean = String(text)
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/[*_`#>]/g, '')
+    .trim();
+  const utt = new SpeechSynthesisUtterance(clean);
+  utt.rate = 1.05;
+  utt.pitch = 1;
+  _tts.speak(utt);
+}
+
+function _stopSpeech() {
+  _tts?.cancel();
+}
+
 function clearHighlight() {
   if (_highlightTarget) {
     _highlightTarget.classList.remove('guidely-ring');
@@ -200,6 +223,7 @@ async function loadModules() {
 
 async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
   clearHighlight();
+  _stopSpeech(); // cancel any ongoing TTS when the user sends a new message
 
   // Persist the user's message immediately so it appears in the thread.
   const displayText = (text || '').trim() || '(What should I do here?)';
@@ -269,6 +293,8 @@ function _makeCallbacks(conversationId) {
     onMessage(message) {
       // Show immediately in the sidebar (live path — no full re-render).
       _sidebar.appendLiveMessage(message);
+      // Speak assistant and done messages aloud.
+      if (message.role === 'assistant') _speak(message.content);
       // Persist asynchronously to chrome.storage.local.
       _store.appendMessage(conversationId, message).catch(() => {});
     },
