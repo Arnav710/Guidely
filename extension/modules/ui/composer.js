@@ -32,7 +32,7 @@ export function mountComposer(rootEl, { onSend } = {}) {
       <button type="button" id="g-send" aria-label="Send">Send</button>
     </div>
     <div class="g-mode-btns" id="g-mode-btns" role="group" aria-label="Choose how Guidely should help">
-      <button type="button" class="g-mode-btn" data-mode="summarize" title="Read and explain what's on the screen">
+      <button type="button" class="g-mode-btn" data-mode="summarize" title="Summarize what's on screen, or type a question to ask about it">
         📄 Summarize
       </button>
       <button type="button" class="g-mode-btn g-mode-active" data-mode="autonomous" title="Navigate, click and fill in forms for you">
@@ -53,11 +53,15 @@ export function mountComposer(rootEl, { onSend } = {}) {
 
   let _selectedMode = 'autonomous';
 
+  const DEFAULT_PLACEHOLDER = 'What do you need help with? (e.g. renew my license, pay my bill…)';
+  const SUMMARIZE_PLACEHOLDER = 'Ask a question about what\'s on screen, or leave blank to summarize it.';
+
   function _selectMode(mode) {
     _selectedMode = mode;
     modeBtns.querySelectorAll('.g-mode-btn').forEach((b) => {
       b.classList.toggle('g-mode-active', b.dataset.mode === mode);
     });
+    ta.placeholder = mode === 'summarize' ? SUMMARIZE_PLACEHOLDER : DEFAULT_PLACEHOLDER;
   }
 
   modeBtns.querySelectorAll('.g-mode-btn').forEach((btn) => {
@@ -97,7 +101,7 @@ export function mountComposer(rootEl, { onSend } = {}) {
       micBtn.textContent = active ? '⏹' : '🎤';
       ta.placeholder = active
         ? 'Listening…'
-        : 'What do you need help with? (e.g. renew my license, pay my bill…)';
+        : (_selectedMode === 'summarize' ? SUMMARIZE_PLACEHOLDER : DEFAULT_PLACEHOLDER);
     }
 
     recognition.onstart = () => _setMicState(true);
@@ -142,7 +146,7 @@ export function mountComposer(rootEl, { onSend } = {}) {
         sendBtn.textContent = 'Reply';
         modeBtns.style.display = 'none';
       } else {
-        ta.placeholder = 'What do you need help with? (e.g. renew my license, pay my bill…)';
+        ta.placeholder = _selectedMode === 'summarize' ? SUMMARIZE_PLACEHOLDER : DEFAULT_PLACEHOLDER;
         hint.textContent = 'Enter to send · Shift+Enter for new line';
         sendBtn.textContent = 'Send';
         modeBtns.style.display = '';

@@ -695,9 +695,14 @@ export async function runSummarize(conversationId, userQuestion, callbacks = {})
 
   await store.setAgentStatus(conversationId, 'running');
   onStatusChange?.('running');
-  onMessage?.({ role: 'system', content: 'Reading what\'s on your screen…' });
+  const isQuestion = (userQuestion || '').trim().length > 0;
+  onMessage?.({ role: 'system', content: isQuestion ? 'Looking at your screen to answer…' : 'Reading what\'s on your screen…' });
 
   const { screenshot } = await _autoCapture();
+
+  // For PDFs and other sandboxed content, innerText is often empty or useless.
+  // The screenshot is the reliable source of truth, so we always send it.
+  // We still include page text as a bonus for regular web pages where it works.
   const pageText = (document.body?.innerText || '')
     .replace(/[\uD800-\uDFFF]/g, '')
     .slice(0, 8000);
@@ -707,15 +712,16 @@ export async function runSummarize(conversationId, userQuestion, callbacks = {})
     pageTextChars: pageText.length,
     screenshotB64Chars: (screenshot || '').length,
     questionPreview: String(userQuestion || '').slice(0, 120),
+    isQuestion,
   });
 
   try {
     const result = await summarizePage({
       screenshot,
-      pageText,
+      pageText: pageText || null,
       pageUrl: window.location.href,
       pageTitle: document.title,
-      userQuestion,
+      userQuestion: isQuestion ? userQuestion : null,
     });
     const summary = result?.summary || 'I couldn\'t read this page clearly. Please try again.';
     _guidelyLog('summarize:ok', {
