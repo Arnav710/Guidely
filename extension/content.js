@@ -576,8 +576,13 @@ async function init() {
 
   // Check if the agent was mid-loop and navigated to this page.
   const session = await _store.getAgentSession(active.id);
+  const isAgentMidTask = session?.status === 'running' || session?.status === 'paused';
   if (session?.awaitingPageLoad && session?.status === 'running') {
+    _sidebar.open();
     _agentLoop.resumeAgentLoop(active.id, _makeCallbacks(active.id));
+  } else if (isAgentMidTask) {
+    // Agent is active (e.g. paused awaiting user input) — keep sidebar visible.
+    _sidebar.open();
   }
 
   const btn = getOrCreateButton();
