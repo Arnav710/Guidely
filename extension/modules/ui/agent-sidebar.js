@@ -327,16 +327,28 @@ const SIDEBAR_CSS = `
   }
   .g-msg-thinking {
     align-self: flex-start;
-    font-size: 22px;
-    letter-spacing: 4px;
-    color: #ccc;
-    background: transparent;
-    animation: g-dots 1.2s infinite;
-    padding: 6px 8px;
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 16px;
+    border-bottom-left-radius: 4px;
+    padding: 12px 16px;
+    display: flex;
+    gap: 5px;
+    align-items: center;
   }
-  @keyframes g-dots {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+  .g-thinking-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #FF6B35;
+    animation: g-bounce 1.2s ease-in-out infinite;
+    opacity: 0.7;
+  }
+  .g-thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+  .g-thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes g-bounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+    40%            { transform: translateY(-6px); opacity: 1; }
   }
 
   /* ── Streaming thought bubble ── */

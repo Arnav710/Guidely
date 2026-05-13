@@ -114,7 +114,7 @@ export function showThinking(rootEl) {
   const div = document.createElement('div');
   div.className = 'g-msg g-msg-thinking';
   div.id = 'g-thinking';
-  div.textContent = '…';
+  div.innerHTML = '<span class="g-thinking-dot"></span><span class="g-thinking-dot"></span><span class="g-thinking-dot"></span>';
   rootEl.appendChild(div);
   rootEl.scrollTop = rootEl.scrollHeight;
   return () => div.remove();
