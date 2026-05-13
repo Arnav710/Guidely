@@ -48,19 +48,27 @@ const SIDEBAR_CSS = `
   /* ── Header ── */
   #g-header {
     flex-shrink: 0;
-    background: #fff;
-    border-bottom: 1px solid #eee;
+    background: linear-gradient(135deg, #fff7f4 0%, #fff 100%);
+    border-bottom: 1px solid #ffd5c3;
     padding: 12px 44px 0 14px;
   }
   #g-title {
-    font-size: 18px;
-    font-weight: 700;
+    font-size: 20px;
+    font-weight: 800;
     color: #FF6B35;
-    margin: 0 0 6px;
+    margin: 0 0 2px;
     line-height: 1.2;
     display: flex;
     align-items: center;
     gap: 8px;
+    letter-spacing: -0.3px;
+  }
+  #g-tagline {
+    font-size: 11px;
+    color: #aaa;
+    margin: 0 0 8px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
   }
 
   /* Agent status badge shown in the header when the loop is running. */
@@ -618,6 +626,7 @@ export async function mountSidebar({ onSubmit, onSidebarClose } = {}) {
           💡 Guidely
           <span id="g-agent-status" role="status"></span>
         </h2>
+        <p id="g-tagline">Your internet companion</p>
         <button type="button" id="g-conv-toggle" aria-expanded="false">
           <span id="g-conv-toggle-icon">▾</span> Conversations
         </button>
