@@ -26,6 +26,9 @@ from models import (
     SummarizeResponse,
     GuideModeRequest,
     GuideModeResponse,
+    VigilanceScanRequest,
+    VigilanceScanResponse,
+    VigilanceFlagOut,
 )
 from ollama_client import (
     analyze_guidely,
@@ -35,10 +38,20 @@ from ollama_client import (
     list_ollama_models,
     get_active_model,
     set_active_model,
+    OLLAMA_TEXT_JSON_OPTIONS,
     OllamaUnavailableError,
     MIN_SCREENSHOT_B64_CHARS,
+    VIGILANCE_RESPONSE_SCHEMA,
+    VIGILANCE_REASONS,
 )
-from prompt import WORKFLOW_PLAN_PROMPT, WORKFLOW_EXTEND_PROMPT, EXPLAIN_PROMPT, SUMMARIZE_PROMPT, GUIDE_MODE_PROMPT
+from prompt import (
+    WORKFLOW_PLAN_PROMPT,
+    WORKFLOW_EXTEND_PROMPT,
+    EXPLAIN_PROMPT,
+    SUMMARIZE_PROMPT,
+    GUIDE_MODE_PROMPT,
+    VIGILANCE_PROMPT,
+)
 from agent import run_agent_start, run_agent_step, stream_agent_step
 
 logging.basicConfig(
@@ -190,7 +203,9 @@ async def workflow_plan(request: WorkflowPlanRequest):
     user_text = f"Goal: {request.goal}\n\n" + "\n".join(page_lines)
 
     try:
-        raw = await call_ollama_text(WORKFLOW_PLAN_PROMPT, user_text)
+        raw = await call_ollama_text(
+            WORKFLOW_PLAN_PROMPT, user_text, options=OLLAMA_TEXT_JSON_OPTIONS
+        )
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
@@ -252,7 +267,9 @@ async def workflow_extend(request: WorkflowExtendRequest):
     user_text = "\n".join(lines)
 
     try:
-        raw = await call_ollama_text(WORKFLOW_EXTEND_PROMPT, user_text)
+        raw = await call_ollama_text(
+            WORKFLOW_EXTEND_PROMPT, user_text, options=OLLAMA_TEXT_JSON_OPTIONS
+        )
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
@@ -284,7 +301,9 @@ async def explain(request: ExplainRequest):
     user_text = f"Domain hint: {request.domain_hint}\n\nText to explain:\n{request.text}"
 
     try:
-        raw = await call_ollama_text(EXPLAIN_PROMPT, user_text)
+        raw = await call_ollama_text(
+            EXPLAIN_PROMPT, user_text, options=OLLAMA_TEXT_JSON_OPTIONS
+        )
     except OllamaUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
@@ -461,6 +480,104 @@ async def guide_mode(request: GuideModeRequest):
         len(resp.instruction or ""),
     )
     return resp
+
+
+_ALLOWED_VIGILANCE_REASONS = frozenset(VIGILANCE_REASONS)
+
+
+@app.post("/vigilance/scan", response_model=VigilanceScanResponse)
+async def vigilance_scan(request: VigilanceScanRequest):
+    """
+    One-shot vigilance triage: screenshot + numbered DOM + visible text → structured flags.
+    The extension calls this on an interval while vigilance mode is active.
+    """
+    parts: list[str] = []
+    if request.page_url:
+        parts.append(f"Page URL: {request.page_url}")
+    if request.page_title:
+        parts.append(f"Page title: {request.page_title}")
+
+    url_low = (request.page_url or "").lower()
+    if "mail.google.com" in url_low or "inbox.google.com" in url_low:
+        parts.append(
+            "APP_CONTEXT: Official Google Mail / Gmail tab — return empty flags unless an opened "
+            "message shows a concrete impersonation or sender mismatch; never flag inbox or compose chrome."
+        )
+    elif "outlook.live.com" in url_low or "outlook.office.com" in url_low or "office.com/mail" in url_low:
+        parts.append(
+            "APP_CONTEXT: Official Microsoft Outlook on the web — same rules as Gmail: empty flags "
+            "unless message content shows a concrete scam signal."
+        )
+
+    if request.dom_summary:
+        parts.append("Numbered visible elements:\n" + request.dom_summary)
+    if request.page_text:
+        parts.append("Visible page text (truncated):\n" + (request.page_text or "")[:8000])
+    user_text = "\n".join(parts) if parts else "No page context was supplied."
+
+    s = (request.screenshot or "").strip()
+    screenshot_b64 = s if len(s) >= MIN_SCREENSHOT_B64_CHARS else None
+
+    logger.info(
+        "vigilance scan: dom_chars=%s page_text_chars=%s has_screenshot=%s",
+        len(request.dom_summary or ""),
+        len(request.page_text or ""),
+        bool(screenshot_b64),
+    )
+
+    try:
+        raw = await call_ollama_multimodal(
+            VIGILANCE_PROMPT,
+            user_text,
+            screenshot_b64=screenshot_b64,
+            expect_json=False,
+            response_schema=VIGILANCE_RESPONSE_SCHEMA,
+        )
+    except OllamaUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    try:
+        parsed = extract_json(raw)
+    except Exception as exc:
+        logger.warning("vigilance parse failed: %s | raw=%s", exc, raw[:300])
+        raise HTTPException(
+            status_code=502,
+            detail="Model returned an unparseable vigilance result.",
+        ) from exc
+
+    flags_raw = parsed.get("flags") or []
+    if not isinstance(flags_raw, list):
+        flags_raw = []
+
+    out_flags: list[VigilanceFlagOut] = []
+    for item in flags_raw[:3]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            n = int(item.get("item_number"))
+        except (TypeError, ValueError):
+            continue
+        if n < 1 or n > 120:
+            continue
+        reason = str(item.get("reason") or "other").strip()[:64]
+        if reason not in _ALLOWED_VIGILANCE_REASONS:
+            reason = "other"
+        expl = str(item.get("explanation") or "").strip()[:400]
+        # High bar: short vague lines are almost always false positives from small models.
+        if len(expl) < 45:
+            continue
+        out_flags.append(VigilanceFlagOut(item_number=n, reason=reason, explanation=expl))
+
+    page_summary = str(parsed.get("page_summary") or "").strip()[:500]
+    if not page_summary:
+        page_summary = "No summary returned."
+
+    from ollama_client import get_active_model as _get_model
+    return VigilanceScanResponse(
+        flags=out_flags,
+        page_summary=page_summary,
+        model_used=_get_model(),
+    )
 
 
 @app.post("/agent/step/stream")

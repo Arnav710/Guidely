@@ -48,6 +48,14 @@ _OLLAMA_OPTIONS: dict[str, Any] = {
     "num_predict": 512,
 }
 
+# Stricter limits for JSON-only text endpoints (workflow + planner): more headroom so
+# {"needs_clarification":...} is not truncated mid-string, and stronger anti-repeat.
+OLLAMA_TEXT_JSON_OPTIONS: dict[str, Any] = {
+    "repeat_penalty": 1.22,
+    "num_predict": 1536,
+    "temperature": 0.2,
+}
+
 # Tighter options for the streaming agent endpoint (must still fit full tool JSON)
 _AGENT_OPTIONS: dict[str, Any] = {
     "repeat_penalty": 1.18,
@@ -78,22 +86,56 @@ _AGENT_RESPONSE_SCHEMA: dict[str, Any] = {
     "required": ["thought", "tool", "params", "display"],
 }
 
+# Vigilance scan — constrained JSON for scam / misinformation triage (multimodal).
+VIGILANCE_REASONS: list[str] = [
+    "fake_urgency",
+    "asking_for_money",
+    "no_sources",
+    "misleading_language",
+    "suspicious_contact_or_link",
+    "excessive_punctuation",
+    "ai_generated_or_generic",
+    "other",
+]
+
+VIGILANCE_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "flags": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "item_number": {"type": "integer"},
+                    "reason": {"type": "string", "enum": VIGILANCE_REASONS},
+                    "explanation": {"type": "string"},
+                },
+                "required": ["item_number", "reason", "explanation"],
+            },
+        },
+        "page_summary": {"type": "string"},
+    },
+    "required": ["flags", "page_summary"],
+}
+
 OLLAMA_BASE = "http://localhost:11434"
 OLLAMA_GENERATE_URL = f"{OLLAMA_BASE}/api/generate"
 OLLAMA_TAGS_URL = f"{OLLAMA_BASE}/api/tags"
 
-# Fallback preference order — first match wins if multiple are installed
-# Tag reference: e2b=~5B vision, e4b=~9B vision (default), 26b/31b larger
+# Fallback preference order — first exact tag match wins if multiple are installed.
+# Prefer the efficient ~4B-class vision tag (e4b) and small variants for stable JSON;
+# large models are listed last so a dev machine with many tags still defaults to e4b.
 _MODEL_PREFERENCE = [
-    "gemma4:31b",
-    "gemma4:26b",
     "gemma4:e4b",
-    "gemma4:e2b",
     "gemma4:2b",
+    "gemma4:e2b",
     "gemma4",
+    "gemma4:26b",
+    "gemma4:31b",
 ]
 
-_active_model: str = "gemma4:e4b"  # prefer 4B-class multimodal; overwritten after detection if missing
+_active_model: str = "gemma4:e4b"  # default; overwritten by _detect_best_model() on first call
 _model_detected: bool = False
 
 logger = logging.getLogger(__name__)
@@ -126,8 +168,16 @@ async def _detect_best_model() -> str:
     for preferred in _MODEL_PREFERENCE:
         if preferred in names:
             return preferred
-    # Return any gemma4 variant found
+    # Any gemma4 tag — pick the smallest / preferred-suffix first, not arbitrary API order
     gemma_models = [n for n in names if n.startswith("gemma4")]
+
+    def _rank(tag: str) -> tuple[int, str]:
+        for i, pref in enumerate(_MODEL_PREFERENCE):
+            if tag == pref or tag.startswith(pref + ":"):
+                return (i, tag)
+        return (len(_MODEL_PREFERENCE), tag)
+
+    gemma_models.sort(key=_rank)
     return gemma_models[0] if gemma_models else _active_model
 
 
@@ -161,12 +211,98 @@ def screenshot_usable(screenshot_b64: Optional[str]) -> bool:
     return len(s) >= MIN_SCREENSHOT_B64_CHARS
 
 
+def _strip_markdown_json_fence(raw: str) -> str:
+    s = (raw or "").strip()
+    s = re.sub(r"^\s*```(?:json)?\s*", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s*```\s*$", "", s)
+    return s.strip()
+
+
+def extract_first_json_object(raw: str) -> Optional[str]:
+    """
+    Return the first top-level JSON object substring using brace depth (strings aware).
+    Unlike a greedy \\{[\\s\\S]*\\} regex, this survives '}' characters inside string values
+    and returns None if the object is truncated (no matching closing brace).
+    """
+    text = _strip_markdown_json_fence(raw)
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    i = start
+    n = len(text)
+    in_str = False
+    esc = False
+    while i < n:
+        c = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        else:
+            if c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+        i += 1
+    return None
+
+
+def recover_partial_agent_plan(raw: str) -> Optional[dict]:
+    """
+    When the planner JSON is truncated or degenerate, recover a minimal needs_clarification
+    object so /agent/start can return 200 instead of 502. Never invent URLs.
+    """
+    text = (raw or "").strip()
+    if "needs_clarification" not in text:
+        return None
+    if not re.search(r'"needs_clarification"\s*:\s*true\b', text):
+        return None
+    m = re.search(r'"question"\s*:\s*"', text)
+    if not m:
+        return {
+            "needs_clarification": True,
+            "question": "Could you share a bit more detail so I can help with this?",
+        }
+    body = text[m.end() :]
+    out: list[str] = []
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and i + 1 < len(body):
+            out.append(body[i : i + 2])
+            i += 2
+            continue
+        if ch == '"':
+            break
+        out.append(ch)
+        i += 1
+    q = "".join(out)
+    q = q.replace("\\n", " ").replace("\\t", " ").replace('\\"', '"').strip()
+    if detect_hallucination(text) or len(q) > 380:
+        base = q[:220]
+        q = (base.rsplit(" ", 1)[0] if " " in base else base) + "…"
+    if len(q) < 10:
+        q = "Could you share a bit more detail so I can help with this?"
+    return {"needs_clarification": True, "question": q[:500]}
+
+
 def extract_json(raw: str) -> dict:
     """Extract the first JSON object from a raw string, ignoring surrounding prose."""
-    match = re.search(r"\{[\s\S]*\}", raw)
-    if not match:
-        raise ValueError(f"No valid JSON found in response: {raw[:200]}")
-    return json.loads(match.group())
+    blob = extract_first_json_object(raw)
+    if not blob:
+        raise ValueError(f"No valid JSON found in response: {(raw or '')[:200]}")
+    try:
+        return json.loads(blob)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON: {exc} | fragment={blob[:220]}") from exc
 
 
 def detect_hallucination(raw: str) -> bool:
@@ -516,11 +652,15 @@ async def call_ollama_multimodal(
     screenshot_b64: Optional[str] = None,
     model: Optional[str] = None,
     expect_json: bool = True,
+    response_schema: Optional[dict[str, Any]] = None,
 ) -> str:
     """
     Ollama call that optionally attaches a vision image.
-    Used for summarize and guide-mode endpoints.
+    Used for summarize, guide mode, and vigilance scan.
     Returns the raw response string.
+
+    If ``response_schema`` is set, it is sent as Ollama's structured ``format`` (JSON Schema).
+    Otherwise ``expect_json=True`` enables generic JSON mode.
     """
     global _active_model, _model_detected
     if not _model_detected:
@@ -531,6 +671,10 @@ async def call_ollama_multimodal(
     has_image = screenshot_usable(screenshot_b64)
     options = dict(_OLLAMA_OPTIONS)
     options["num_predict"] = 1024  # summaries can be longer
+    if response_schema is not None:
+        options["num_predict"] = 1536
+        options["repeat_penalty"] = max(float(options.get("repeat_penalty", 1.0)), 1.18)
+        options["temperature"] = 0.1
 
     payload: dict[str, Any] = {
         "model": chosen,
@@ -539,7 +683,9 @@ async def call_ollama_multimodal(
         "stream": False,
         "options": options,
     }
-    if expect_json:
+    if response_schema is not None:
+        payload["format"] = response_schema
+    elif expect_json:
         payload["format"] = "json"
     if has_image:
         payload["images"] = [screenshot_b64]
@@ -570,10 +716,14 @@ async def call_ollama_text(
     user_text: str,
     *,
     model: Optional[str] = None,
+    options: Optional[dict[str, Any]] = None,
 ) -> str:
     """
     Text-only (no vision) Ollama call. Returns the raw response string.
-    Used for plan generation, explain, and vigilance triage.
+    Used for plan generation, explain, and workflow-style JSON text calls.
+
+    Pass ``options=OLLAMA_TEXT_JSON_OPTIONS`` for JSON planners (higher token cap,
+    stronger repeat penalty) so small models do not truncate mid-object.
     """
     global _active_model, _model_detected
     if not _model_detected:
@@ -581,13 +731,14 @@ async def call_ollama_text(
         _model_detected = True
 
     chosen = model or _active_model
+    merged_opts: dict[str, Any] = {**_OLLAMA_OPTIONS, **(options or {})}
     payload: dict[str, Any] = {
         "model": chosen,
         "system": system_prompt,
         "prompt": user_text,
         "stream": False,
         "format": "json",
-        "options": _OLLAMA_OPTIONS,
+        "options": merged_opts,
     }
     try:
         async with httpx.AsyncClient(timeout=_OLLAMA_TIMEOUT) as client:

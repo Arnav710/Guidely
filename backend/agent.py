@@ -17,10 +17,12 @@ from typing import Any, AsyncIterator, Optional
 
 from models import AgentStartRequest, AgentStartResponse, AgentStepRequest, AgentStepResponse
 from ollama_client import (
+    OLLAMA_TEXT_JSON_OPTIONS,
     call_agent,
     call_ollama_text,
     detect_hallucination,
     extract_json,
+    recover_partial_agent_plan,
     screenshot_usable,
     stream_agent_call,
     OllamaUnavailableError,
@@ -333,13 +335,36 @@ async def run_agent_start(request: AgentStartRequest) -> AgentStartResponse:
         )
 
     user_text = "\n".join(parts)
-    raw = await call_ollama_text(AGENT_PLAN_PROMPT, user_text)
+    raw = await call_ollama_text(
+        AGENT_PLAN_PROMPT, user_text, options=OLLAMA_TEXT_JSON_OPTIONS
+    )
 
     try:
         parsed = extract_json(raw)
-    except (ValueError, Exception) as exc:
-        logger.warning("agent/start plan parse failed: %s | raw=%s", exc, raw[:300])
-        raise ValueError("Model returned an unparseable plan. Please try again.")
+    except ValueError as exc:
+        recovered = recover_partial_agent_plan(raw)
+        if recovered is not None:
+            logger.warning(
+                "agent/start plan parse failed — using partial recovery: %s",
+                exc,
+            )
+            parsed = recovered
+        elif detect_hallucination(raw):
+            logger.warning(
+                "agent/start plan parse failed (repetition in output): %s | raw=%s",
+                exc,
+                raw[:300],
+            )
+            parsed = {
+                "needs_clarification": True,
+                "question": (
+                    "I had trouble forming a plan just now. In one short sentence, "
+                    "what would you like me to help you do on this page?"
+                ),
+            }
+        else:
+            logger.warning("agent/start plan parse failed: %s | raw=%s", exc, raw[:300])
+            raise ValueError("Model returned an unparseable plan. Please try again.")
 
     # Planner signalled that required details are missing — synthesise a
     # one-step plan so the loop immediately calls ask_user on iteration 1.
@@ -530,7 +555,9 @@ async def run_agent_step(request: AgentStepRequest) -> AgentStepResponse:
             "Create a new plan to complete the goal from this position."
         )
         try:
-            raw_plan = await call_ollama_text(AGENT_PLAN_PROMPT, replan_context)
+            raw_plan = await call_ollama_text(
+                AGENT_PLAN_PROMPT, replan_context, options=OLLAMA_TEXT_JSON_OPTIONS
+            )
             parsed_plan = extract_json(raw_plan)
             steps_raw = parsed_plan.get("steps") or []
             new_steps = [
@@ -836,7 +863,9 @@ async def stream_agent_step(request: AgentStepRequest) -> AsyncIterator[str]:
             "Create a new plan to complete the goal from this position."
         )
         try:
-            raw_plan = await call_ollama_text(AGENT_PLAN_PROMPT, replan_context)
+            raw_plan = await call_ollama_text(
+                AGENT_PLAN_PROMPT, replan_context, options=OLLAMA_TEXT_JSON_OPTIONS
+            )
             parsed_plan = extract_json(raw_plan)
             steps_raw = parsed_plan.get("steps") or []
             new_steps = [

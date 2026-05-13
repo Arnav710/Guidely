@@ -28,6 +28,25 @@ def test_extract_json_null_selector():
     assert result["selector"] is None
 
 
+def test_extract_json_brace_inside_string():
+    raw = r'{"message": "Use } carefully", "ok": true}'
+    result = extract_json(raw)
+    assert result["ok"] is True
+    assert "}" in result["message"]
+
+
+def test_recover_partial_agent_plan_truncated_question():
+    from ollama_client import recover_partial_agent_plan
+
+    raw = (
+        '{"needs_clarification": true, "question": "Which airport and what date?'
+    )
+    out = recover_partial_agent_plan(raw)
+    assert out is not None
+    assert out["needs_clarification"] is True
+    assert "airport" in out["question"]
+
+
 @pytest.mark.asyncio
 async def test_call_ollama_returns_parsed_response():
     from unittest.mock import MagicMock

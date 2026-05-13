@@ -186,3 +186,58 @@ async def test_set_model_succeeds_for_installed_model():
             response = await client.post("/models/active", json={"model": "gemma4:27b"})
     assert response.status_code == 200
     assert response.json()["active"] == "gemma4:27b"
+
+
+@pytest.mark.asyncio
+async def test_vigilance_scan_returns_flags():
+    raw_json = (
+        '{"flags": [{"item_number": 2, "reason": "fake_urgency", '
+        '"explanation": "The banner says your account expires in ten minutes. '
+        'That is an extreme deadline not typical of legitimate banks."}], '
+        '"page_summary": "Several urgency cues."}'
+    )
+    with patch("main.call_ollama_multimodal", new_callable=AsyncMock, return_value=raw_json):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/vigilance/scan",
+                json={
+                    "screenshot": FAKE_SCREENSHOT_B64,
+                    "page_url": "https://example.com/pay",
+                    "page_title": "Pay now",
+                    "dom_summary": '1. [button] "OK" — selector: #ok\n2. [a] "Pay in 10 min" — selector: #pay',
+                    "page_text": "Pay within 10 minutes",
+                },
+            )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["flags"]) == 1
+    assert data["flags"][0]["item_number"] == 2
+    assert data["flags"][0]["reason"] == "fake_urgency"
+    assert "page_summary" in data
+
+
+@pytest.mark.asyncio
+async def test_vigilance_scan_coerces_unknown_reason():
+    raw_json = (
+        '{"flags": [{"item_number": 1, "reason": "not_a_real_reason", '
+        '"explanation": "The visible From line shows a bank name but the address uses a free email provider. '
+        'That mismatch is a common phishing pattern."}], "page_summary": "x"}'
+    )
+    with patch("main.call_ollama_multimodal", new_callable=AsyncMock, return_value=raw_json):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/vigilance/scan", json={"dom_summary": "1. [p] \"Hi\" — selector: p"})
+    assert response.status_code == 200
+    assert response.json()["flags"][0]["reason"] == "other"
+
+
+@pytest.mark.asyncio
+async def test_vigilance_scan_drops_short_explanations():
+    raw_json = (
+        '{"flags": [{"item_number": 1, "reason": "fake_urgency", "explanation": "Too short"}], '
+        '"page_summary": "ok"}'
+    )
+    with patch("main.call_ollama_multimodal", new_callable=AsyncMock, return_value=raw_json):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post("/vigilance/scan", json={"dom_summary": "1. [p] \"Hi\" — selector: p"})
+    assert response.status_code == 200
+    assert response.json()["flags"] == []

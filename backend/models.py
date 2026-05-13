@@ -321,3 +321,47 @@ class GuideModeResponse(BaseModel):
     selector: Optional[str] = None
     label: Optional[str] = None
     model_used: Optional[str] = None
+
+
+# ── Vigilance mode (continuous scam / misinformation triage) ─────────────────
+
+class VigilanceScanRequest(BaseModel):
+    """
+    One snapshot: screenshot + numbered visible DOM lines + optional page text.
+    The model returns structured flags referencing item numbers from dom_summary.
+    """
+    screenshot: Optional[str] = Field(None)
+    page_url: Optional[str] = Field(None, max_length=2000)
+    page_title: Optional[str] = Field(None, max_length=500)
+    dom_summary: Optional[str] = Field(None, max_length=25000)
+    page_text: Optional[str] = Field(
+        None,
+        max_length=12000,
+        description="Visible text (e.g. document.body.innerText) to complement the DOM list.",
+    )
+
+    @field_validator("screenshot", mode="before")
+    @classmethod
+    def screenshot_str_or_none(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        return None
+
+    @field_validator("dom_summary", "page_url", "page_title", "page_text", mode="before")
+    @classmethod
+    def sanitize_unicode(cls, v: Any) -> Optional[str]:
+        return _strip_surrogates(v)
+
+
+class VigilanceFlagOut(BaseModel):
+    item_number: int = Field(..., ge=1, le=120)
+    reason: str = Field(..., max_length=64)
+    explanation: str = Field(..., max_length=400)
+
+
+class VigilanceScanResponse(BaseModel):
+    flags: list[VigilanceFlagOut] = Field(default_factory=list)
+    page_summary: str = ""
+    model_used: Optional[str] = None
