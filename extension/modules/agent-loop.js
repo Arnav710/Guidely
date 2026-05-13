@@ -24,7 +24,7 @@
  */
 
 import * as store from './conversation-store.js';
-import { agentStart, agentStepStream, extendWorkflow, summarizePage, guideMode } from './api.js';
+import { agentStart, agentStepStream, extendWorkflow, summarizePage, guideMode, vigilanceScan } from './api.js';
 
 // Safety ceiling: stop the loop after this many tool calls to prevent infinite loops.
 // Backend also forces `done` around iteration 18 when `loop_iteration` is sent.
@@ -872,6 +872,132 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
 
   await store.setAgentStatus(conversationId, 'idle');
   onDone?.({ keepHighlight: true });
+}
+
+// ── Vigilance mode (periodic scam / misinformation triage) ─────────────────────
+
+let _vigilanceActive = false;
+let _vigilanceTimer = null;
+let _vigilanceBusy = false;
+
+/** @returns {boolean} */
+export function isVigilanceActive() {
+  return _vigilanceActive;
+}
+
+/**
+ * Stop the vigilance polling loop and clear UI via `onVigilanceClear`.
+ * @param {string} conversationId
+ * @param {{ onMessage?, onVigilanceClear? }} callbacks
+ * @param {{ silent?: boolean }} opts  If silent, no chat system line is appended.
+ */
+export function stopVigilanceMode(conversationId, callbacks = {}, opts = {}) {
+  void conversationId;
+  const silent = !!opts.silent;
+  if (!_vigilanceActive && !_vigilanceTimer) return;
+  _vigilanceActive = false;
+  if (_vigilanceTimer) {
+    clearTimeout(_vigilanceTimer);
+    _vigilanceTimer = null;
+  }
+  _vigilanceBusy = false;
+  callbacks.onVigilanceClear?.();
+  if (!silent) {
+    callbacks.onMessage?.({ role: 'system', content: 'Vigilance mode stopped.' });
+  }
+}
+
+function _collectVigilanceDom() {
+  const sidebarEl = document.getElementById('g-sidebar');
+  const selectorMap = {};
+  const allElements = [];
+  const sections = getPageSections();
+  for (const sec of (sections?.sections || [])) {
+    const secElements = getElementsInSection(sec.id);
+    for (const el of (secElements?.elements || [])) {
+      try {
+        const node = document.querySelector(el.selector);
+        if (node && sidebarEl && sidebarEl.contains(node)) continue;
+      } catch { /* ignore */ }
+      const safeLabel = (el.label || '').replace(/[\uD800-\uDFFF]/g, '').trim();
+      const safeSelector = (el.selector || '').replace(/[\uD800-\uDFFF]/g, '');
+      if (!safeLabel || safeLabel === 'a') continue;
+      const idx = allElements.length + 1;
+      selectorMap[idx] = safeSelector;
+      const displaySelector = safeSelector.length > 80 ? `${safeSelector.slice(0, 80)}…` : safeSelector;
+      allElements.push({ tag: el.tag, label: safeLabel, selector: displaySelector, idx });
+      if (allElements.length >= 55) break;
+    }
+    if (allElements.length >= 55) break;
+  }
+  const domMap = allElements.length > 0
+    ? allElements.map((e) => `${e.idx}. [${e.tag}] "${e.label}" — selector: ${e.selector}`).join('\n')
+    : '';
+  return { selectorMap, domMap };
+}
+
+async function _runOneVigilanceScan(conversationId, callbacks = {}) {
+  void conversationId;
+  const { onVigilanceFlags, onError } = callbacks;
+  const { screenshot } = await _autoCapture();
+  const { selectorMap, domMap } = _collectVigilanceDom();
+  const pageText = (document.body?.innerText || '')
+    .replace(/[\uD800-\uDFFF]/g, '')
+    .slice(0, 8000);
+  try {
+    const result = await vigilanceScan({
+      screenshot,
+      pageUrl: window.location.href,
+      pageTitle: document.title,
+      domSummary: domMap || null,
+      pageText: pageText || null,
+    });
+    onVigilanceFlags?.({
+      flags: result?.flags || [],
+      pageSummary: result?.page_summary || '',
+      selectorMap,
+    });
+  } catch (err) {
+    _guidelyLog('vigilance:error', { message: err?.message || String(err) });
+    onError?.(`Vigilance check failed: ${err.message}`);
+  }
+}
+
+/**
+ * Start periodic vigilance scans (every 10s, or 10s after the previous if still busy).
+ * @param {string} conversationId
+ * @param {{ onMessage?, onError?, onVigilanceFlags?, onVigilanceClear? }} callbacks
+ */
+export function startVigilanceMode(conversationId, callbacks = {}) {
+  void conversationId;
+  if (_vigilanceActive) return;
+  _vigilanceActive = true;
+  callbacks.onMessage?.({
+    role: 'system',
+    content: 'Vigilance on: checking every 10 seconds for pressure tactics, money requests, odd links, and other red flags. Send again to stop.',
+  });
+
+  const scheduleNext = (delayMs) => {
+    _vigilanceTimer = setTimeout(tick, delayMs);
+  };
+
+  const tick = async () => {
+    if (!_vigilanceActive) return;
+    if (_vigilanceBusy) {
+      scheduleNext(10_000);
+      return;
+    }
+    _vigilanceBusy = true;
+    try {
+      await _runOneVigilanceScan(conversationId, callbacks);
+    } finally {
+      _vigilanceBusy = false;
+    }
+    if (!_vigilanceActive) return;
+    scheduleNext(10_000);
+  };
+
+  scheduleNext(0);
 }
 
 /**

@@ -31,7 +31,52 @@ const BTN_STYLES = `
   }
   #guidely-btn:hover { background: #e05a28; transform: scale(1.04); }
   #guidely-btn:disabled { background: #aaa; cursor: not-allowed; transform: none; }
-  #g-sidebar.g-open ~ #guidely-btn { display: none !important; }
+  #g-sidebar.g-open ~ #guidely-btn:not(.guidely-btn--vigilance-stop) {
+    display: none !important;
+  }
+  #guidely-btn.guidely-btn--vigilance-stop {
+    background: #b91c1c !important;
+    box-shadow: 0 4px 18px rgba(185, 28, 28, 0.45);
+  }
+  #guidely-btn.guidely-btn--vigilance-stop:hover {
+    background: #991b1b !important;
+  }
+
+  /* Vigilance mode — risk outline + floating note (separate from guide ring). */
+  .guidely-vigilance-risk {
+    outline: 3px solid #dc2626 !important;
+    outline-offset: 2px !important;
+    scroll-margin: 72px;
+  }
+  .guidely-vigil-popup-wrap {
+    position: fixed;
+    z-index: 2147483645;
+    max-width: 280px;
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    line-height: 1.35;
+    color: #111827;
+    background: #fff7f7;
+    border: 1px solid #fecaca;
+    border-left: 4px solid #dc2626;
+    border-radius: 8px;
+    padding: 10px 10px 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+  }
+  .guidely-vigil-popup-wrap strong { display: block; margin-bottom: 4px; color: #991b1b; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .guidely-vigil-popup-wrap p { margin: 0 0 8px; }
+  .guidely-vigil-popup-wrap button {
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid #dc2626;
+    background: #fff;
+    color: #b91c1c;
+    cursor: pointer;
+  }
+  .guidely-vigil-popup-wrap button:hover { background: #fef2f2; }
 
   /* Static rectangular ring: no pulse (pulse + outline looked broken on rounded links). */
   .guidely-ring {
@@ -200,12 +245,115 @@ function highlightElement(selector, label, opts = {}) {
   _highlightTimer = setTimeout(clearHighlight, durationMs);
 }
 
+// ── Vigilance overlays (red outline + small acknowledge popup) ───────────────
+
+const _VIGILANCE_REASON_LABELS = {
+  fake_urgency: 'Fake urgency',
+  asking_for_money: 'Money or payment request',
+  no_sources: 'No sources listed',
+  misleading_language: 'Misleading wording',
+  suspicious_contact_or_link: 'Odd link, email, or phone',
+  excessive_punctuation: 'Excessive punctuation',
+  ai_generated_or_generic: 'Generic or AI-like text',
+  other: 'Unusual pattern',
+};
+
+/** @type {{ el: Element, wrap: HTMLElement }[]} */
+const _vigilanceMarked = [];
+
+function clearVigilanceOverlays() {
+  while (_vigilanceMarked.length) {
+    const row = _vigilanceMarked.pop();
+    try {
+      row.el?.classList?.remove('guidely-vigilance-risk');
+    } catch { /* ignore */ }
+    try {
+      row.wrap?.remove();
+    } catch { /* ignore */ }
+  }
+}
+
+/**
+ * @param {{ flags: Array<{ item_number: number, reason: string, explanation: string }>, selectorMap: Record<number, string> }} payload
+ */
+function applyVigilanceFlags(payload) {
+  injectBtnStyles();
+  clearVigilanceOverlays();
+  const flags = payload?.flags || [];
+  const map = payload?.selectorMap || {};
+  for (let i = 0; i < flags.length; i += 1) {
+    const f = flags[i];
+    const num = Number(f?.item_number);
+    const sel = map[num];
+    if (!sel) continue;
+    let el = null;
+    try {
+      el = document.querySelector(sel);
+    } catch { /* ignore */ }
+    if (!el) el = _querySelectorWithIdFallback(sel);
+    if (!el || !_roughVisible(el)) continue;
+    el.classList.add('guidely-vigilance-risk');
+    try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* ignore */ }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'guidely-vigil-popup-wrap';
+    const rect = el.getBoundingClientRect();
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - 296));
+    let topPx = rect.bottom + 8;
+    if (topPx > window.innerHeight - 120) {
+      topPx = Math.max(8, rect.top - 130);
+    }
+    wrap.style.top = `${topPx}px`;
+    wrap.style.left = `${left}px`;
+
+    const title = document.createElement('strong');
+    title.textContent = _VIGILANCE_REASON_LABELS[f.reason] || 'Heads up';
+
+    const p = document.createElement('p');
+    p.textContent = String(f.explanation || '').slice(0, 320);
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Acknowledge';
+
+    btn.addEventListener('click', () => {
+      try { el.classList.remove('guidely-vigilance-risk'); } catch { /* ignore */ }
+      try { wrap.remove(); } catch { /* ignore */ }
+      const ix = _vigilanceMarked.findIndex((r) => r.wrap === wrap);
+      if (ix >= 0) _vigilanceMarked.splice(ix, 1);
+    });
+
+    wrap.appendChild(title);
+    wrap.appendChild(p);
+    wrap.appendChild(btn);
+    document.body.appendChild(wrap);
+    _vigilanceMarked.push({ el, wrap });
+  }
+}
+
 // ── Module handles ────────────────────────────────────────────────────────────
 
 let _store = null;
 let _sidebar = null;
 let _api = null;
 let _agentLoop = null;
+
+async function handleSidebarClosed() {
+  if (!_agentLoop?.isVigilanceActive?.()) return;
+  const active = await _store.getActive();
+  if (active?.id) {
+    await _store.appendMessage(active.id, {
+      role: 'system',
+      content: 'Vigilance stopped (sidebar closed).',
+      pageUrl: window.location.href,
+      pageTitle: document.title,
+    }).catch(() => {});
+    _agentLoop.stopVigilanceMode(active.id, _makeCallbacks(active.id), { silent: true });
+  } else {
+    _agentLoop.stopVigilanceMode('_', { onVigilanceClear: clearVigilanceOverlays, onMessage: () => {} }, { silent: true });
+  }
+  _syncFloatingButtonVigilance();
+}
 
 async function loadModules() {
   if (_store && _sidebar && _api && _agentLoop) return;
@@ -216,17 +364,46 @@ async function loadModules() {
     import(`${base}agent-loop.js`),
   ]);
   const { mountSidebar } = await import(`${base}ui/agent-sidebar.js`);
-  _sidebar = await mountSidebar({ onSubmit: handleUserInput });
+  _sidebar = await mountSidebar({
+    onSubmit: handleUserInput,
+    onSidebarClose: handleSidebarClosed,
+  });
 }
 
 // ── User input handler ────────────────────────────────────────────────────────
 
 async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
-  clearHighlight();
-  _stopSpeech(); // cancel any ongoing TTS when the user sends a new message
+  const rawTrim = (text || '').trim();
 
-  // Persist the user's message immediately so it appears in the thread.
-  const displayText = (text || '').trim() || '(What should I do here?)';
+  // Vigilance: while active, Send again stops (empty message after send counts as stop).
+  if (mode === 'vigilance' && _agentLoop?.isVigilanceActive?.()) {
+    clearVigilanceOverlays();
+    clearHighlight();
+    _stopSpeech();
+    await _store.appendMessage(conversationId, {
+      role: 'user',
+      content: rawTrim || 'Stop vigilance',
+      pageUrl: window.location.href,
+      pageTitle: document.title,
+    });
+    _agentLoop.stopVigilanceMode(conversationId, _makeCallbacks(conversationId));
+    _syncFloatingButtonVigilance();
+    return;
+  }
+
+  if (mode !== 'vigilance' && _agentLoop?.isVigilanceActive?.()) {
+    _agentLoop.stopVigilanceMode(conversationId, _makeCallbacks(conversationId), { silent: true });
+    _syncFloatingButtonVigilance();
+  }
+
+  clearHighlight();
+  _stopSpeech();
+
+  let displayText = rawTrim || '(What should I do here?)';
+  if (mode === 'vigilance' && (!rawTrim || displayText === '(What should I do here?)')) {
+    displayText = 'Start vigilance';
+  }
+
   await _store.appendMessage(conversationId, {
     role: 'user',
     content: displayText,
@@ -236,39 +413,40 @@ async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
 
   const session = await _store.getAgentSession(conversationId);
 
-  // Case 1: Agent is paused waiting for user input — always resume with answer regardless of mode.
   if (session?.status === 'paused' && session.pendingUserQuestion) {
     await _agentLoop.respondToUserQuestion(conversationId, displayText, _makeCallbacks(conversationId));
     return;
   }
 
-  // Case 2: Agent is already running (shouldn't normally reach here).
   if (session?.status === 'running') return;
 
-  if (!displayText || displayText === '(What should I do here?)') {
+  if ((!rawTrim || displayText === '(What should I do here?)') && mode !== 'vigilance') {
     _sidebar.appendLiveMessage({ role: 'system', content: "Please tell me what you'd like help with." });
     return;
   }
 
-  // Case 3: Summarize mode — one-shot, no browsing.
   if (mode === 'summarize') {
     await _agentLoop.runSummarize(conversationId, displayText, _makeCallbacks(conversationId));
     return;
   }
 
-  // Case 4: Guide mode — highlight only, no clicking.
   if (mode === 'guide') {
     await _agentLoop.runGuideMode(conversationId, displayText, highlightElement, _makeCallbacks(conversationId));
     return;
   }
 
-  // Case 5: Agent is idle (finished a task) — continue conversation in autonomous mode.
+  if (mode === 'vigilance') {
+    _agentLoop.startVigilanceMode(conversationId, _makeCallbacks(conversationId));
+    _syncFloatingButtonVigilance();
+    _sidebar.close?.({ silent: true });
+    return;
+  }
+
   if (session?.status === 'idle' && session?.toolHistory?.length > 0) {
     await _agentLoop.continueAgentLoop(conversationId, displayText, _makeCallbacks(conversationId));
     return;
   }
 
-  // Case 6: Fresh autonomous goal — start the agent loop.
   await _agentLoop.startAgentLoop(conversationId, displayText, _makeCallbacks(conversationId));
 }
 
@@ -293,10 +471,14 @@ function _makeCallbacks(conversationId) {
     onMessage(message) {
       // Show immediately in the sidebar (live path — no full re-render).
       _sidebar.appendLiveMessage(message);
-      // Speak assistant and done messages aloud.
       if (message.role === 'assistant') _speak(message.content);
-      // Persist asynchronously to chrome.storage.local.
       _store.appendMessage(conversationId, message).catch(() => {});
+    },
+    onVigilanceFlags(payload) {
+      applyVigilanceFlags(payload);
+    },
+    onVigilanceClear() {
+      clearVigilanceOverlays();
     },
     onActionChoice({ question, selector, label }) {
       // Highlight the element immediately so the user can see what we're referring to.
@@ -348,8 +530,26 @@ function getOrCreateButton() {
   btn.id = 'guidely-btn';
   btn.type = 'button';
   btn.textContent = '💡 Help me';
+  btn.setAttribute('aria-label', 'Open Guidely');
   document.body.appendChild(btn);
   return btn;
+}
+
+function _syncFloatingButtonVigilance() {
+  const btn = document.getElementById('guidely-btn');
+  if (!btn || !_agentLoop) return;
+  const on = typeof _agentLoop.isVigilanceActive === 'function' && _agentLoop.isVigilanceActive();
+  if (on) {
+    btn.textContent = 'Stop';
+    btn.setAttribute('aria-label', 'Stop vigilance');
+    btn.title = 'Vigilance is on — scanning the page. Click to stop.';
+    btn.classList.add('guidely-btn--vigilance-stop');
+  } else {
+    btn.textContent = '💡 Help me';
+    btn.setAttribute('aria-label', 'Open Guidely');
+    btn.removeAttribute('title');
+    btn.classList.remove('guidely-btn--vigilance-stop');
+  }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -385,7 +585,28 @@ async function init() {
   }
 
   const btn = getOrCreateButton();
-  btn.addEventListener('click', () => _sidebar.open());
+  btn.addEventListener('click', async () => {
+    if (_agentLoop?.isVigilanceActive?.()) {
+      clearVigilanceOverlays();
+      const active = await _store.getActive();
+      if (active?.id) {
+        await _store.appendMessage(active.id, {
+          role: 'system',
+          content: 'Vigilance stopped.',
+          pageUrl: window.location.href,
+          pageTitle: document.title,
+        }).catch(() => {});
+        _agentLoop.stopVigilanceMode(active.id, _makeCallbacks(active.id), { silent: true });
+      } else {
+        _agentLoop.stopVigilanceMode('_', { onVigilanceClear: clearVigilanceOverlays, onMessage: () => {} }, { silent: true });
+      }
+      _syncFloatingButtonVigilance();
+      return;
+    }
+    _sidebar.open();
+  });
+
+  _syncFloatingButtonVigilance();
 
   // One visible line so you know logging works — content-script logs only appear
   // in this page's Console when that tab's DevTools is open (not extension popup).

@@ -514,12 +514,29 @@ let _agentRunning = false;
  * Mount the persistent agent sidebar into the current page.
  * Safe to call multiple times (idempotent — reuses existing DOM element).
  *
- * @param {{ onSubmit }} callbacks
- *   onSubmit({ conversationId, text }) → called when user sends a message
+ * @param {{ onSubmit, onSidebarClose }} callbacks
+ *   onSubmit({ conversationId, text, mode }) → called when user sends a message
+ *   onSidebarClose() → called when the user closes the sidebar (✕ or API close())
  *
  * @returns {Object} sidebar control API
  */
-export async function mountSidebar({ onSubmit } = {}) {
+export async function mountSidebar({ onSubmit, onSidebarClose } = {}) {
+  function notifySidebarClosed() {
+    try {
+      onSidebarClose?.();
+    } catch (e) {
+      console.warn('[Guidely] onSidebarClose failed', e);
+    }
+  }
+
+  /** @param {{ silent?: boolean }} opts  If silent, do not run onSidebarClose (e.g. auto-close for vigilance). */
+  function closeSidebar(opts = {}) {
+    const sb = document.getElementById('g-sidebar');
+    if (!sb) return;
+    sb.classList.remove('g-open');
+    if (!opts.silent) notifySidebarClosed();
+  }
+
   if (!document.getElementById('g-sidebar-styles')) {
     const style = document.createElement('style');
     style.id = 'g-sidebar-styles';
@@ -552,7 +569,7 @@ export async function mountSidebar({ onSubmit } = {}) {
     document.body.appendChild(sidebar);
     _sidebarEl = sidebar;
 
-    sidebar.querySelector('#g-close').addEventListener('click', () => sidebar.classList.remove('g-open'));
+    sidebar.querySelector('#g-close').addEventListener('click', () => closeSidebar());
 
     const convToggle = sidebar.querySelector('#g-conv-toggle');
     const convPanel = sidebar.querySelector('#g-conv-panel');
@@ -617,7 +634,7 @@ export async function mountSidebar({ onSubmit } = {}) {
       sidebar.classList.add('g-open');
       _composerCtl?.focus();
     },
-    close() { sidebar.classList.remove('g-open'); },
+    close: closeSidebar,
 
     /** Optimistically append a message bubble without waiting for a full re-render. */
     appendLiveMessage(message) {

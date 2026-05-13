@@ -3,7 +3,7 @@
  *
  * UX:
  *   1. User types (or speaks via mic button) their question.
- *   2. User selects a mode: Summarize | Do it for me | Guide me.
+ *   2. User selects a mode: Summarize | Do it for me | Guide me | Vigilance (Vigilance starts immediately).
  *   3. User clicks Send (or presses Enter) to submit.
  *
  * Speech-to-text: Web Speech API (SpeechRecognition) — Chrome built-in, no deps.
@@ -41,6 +41,9 @@ export function mountComposer(rootEl, { onSend } = {}) {
       <button type="button" class="g-mode-btn" data-mode="guide" title="Highlight what you should click — no automation">
         👆 Guide me
       </button>
+      <button type="button" class="g-mode-btn" data-mode="vigilance" title="Watch the page for scam-like patterns — highlights risky spots">
+        🛡 Vigilance
+      </button>
     </div>
     <p class="g-hint" id="g-composer-hint">Enter to send · Shift+Enter for new line</p>
   `;
@@ -55,17 +58,36 @@ export function mountComposer(rootEl, { onSend } = {}) {
 
   const DEFAULT_PLACEHOLDER = 'What do you need help with? (e.g. renew my license, pay my bill…)';
   const SUMMARIZE_PLACEHOLDER = 'Ask a question about what\'s on screen, or leave blank to summarize it.';
+  const VIGILANCE_PLACEHOLDER = 'Optional note (or leave blank). Vigilance starts as soon as you tap the mode above.';
 
   function _selectMode(mode) {
     _selectedMode = mode;
     modeBtns.querySelectorAll('.g-mode-btn').forEach((b) => {
       b.classList.toggle('g-mode-active', b.dataset.mode === mode);
     });
-    ta.placeholder = mode === 'summarize' ? SUMMARIZE_PLACEHOLDER : DEFAULT_PLACEHOLDER;
+    if (mode === 'summarize') {
+      ta.placeholder = SUMMARIZE_PLACEHOLDER;
+      hint.textContent = 'Enter to send · Shift+Enter for new line';
+    } else if (mode === 'vigilance') {
+      ta.placeholder = VIGILANCE_PLACEHOLDER;
+      hint.textContent = 'Starts immediately · Sidebar closes · Red Stop button on the page · Not legal advice';
+    } else {
+      ta.placeholder = DEFAULT_PLACEHOLDER;
+      hint.textContent = 'Enter to send · Shift+Enter for new line';
+    }
   }
 
   modeBtns.querySelectorAll('.g-mode-btn').forEach((btn) => {
-    btn.addEventListener('click', () => _selectMode(btn.dataset.mode));
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      const prev = _selectedMode;
+      _selectMode(mode);
+      if (mode === 'vigilance' && prev !== 'vigilance') {
+        if (ta.disabled) return;
+        onSend?.({ text: '', mode: 'vigilance' });
+        ta.value = '';
+      }
+    });
   });
 
   function fire() {
@@ -101,7 +123,9 @@ export function mountComposer(rootEl, { onSend } = {}) {
       micBtn.textContent = active ? '⏹' : '🎤';
       ta.placeholder = active
         ? 'Listening…'
-        : (_selectedMode === 'summarize' ? SUMMARIZE_PLACEHOLDER : DEFAULT_PLACEHOLDER);
+        : (_selectedMode === 'summarize'
+          ? SUMMARIZE_PLACEHOLDER
+          : (_selectedMode === 'vigilance' ? VIGILANCE_PLACEHOLDER : DEFAULT_PLACEHOLDER));
     }
 
     recognition.onstart = () => _setMicState(true);

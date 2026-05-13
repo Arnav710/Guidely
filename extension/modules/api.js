@@ -284,6 +284,26 @@ export async function guideMode({
   return _post('/guide', body);
 }
 
+/**
+ * POST /vigilance/scan — scam / manipulation triage for visible DOM + screenshot.
+ */
+export async function vigilanceScan({
+  screenshot = null,
+  pageUrl = '',
+  pageTitle = '',
+  domSummary = '',
+  pageText = null,
+} = {}) {
+  const body = {
+    page_url: pageUrl || null,
+    page_title: pageTitle || null,
+    dom_summary: domSummary || null,
+    page_text: pageText || null,
+  };
+  if (screenshot && screenshot.length >= 80) body.screenshot = screenshot;
+  return _post('/vigilance/scan', body);
+}
+
 /** GET /health — backend liveness check. */
 export async function checkHealth() {
   try {
