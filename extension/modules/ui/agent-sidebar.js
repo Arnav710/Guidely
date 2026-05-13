@@ -559,6 +559,16 @@ const SIDEBAR_CSS = `
     color: #fff;
     border-color: #FF6B35;
   }
+  .g-mode-btn.g-mode-vigilance-on {
+    background: #dc2626;
+    color: #fff;
+    border-color: #dc2626;
+    animation: g-vigil-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes g-vigil-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(220,38,38,0.35); }
+    50%       { box-shadow: 0 0 0 5px rgba(220,38,38,0); }
+  }
   .g-mode-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
@@ -722,6 +732,25 @@ export async function mountSidebar({ onSubmit, onSidebarClose } = {}) {
       _composerCtl?.focus();
     },
     close: closeSidebar,
+
+    /** Toggle the vigilance mode button between "start" and "stop" states. */
+    setVigilanceActive(active) {
+      const btn = sidebar.querySelector('.g-mode-btn[data-mode="vigilance"]');
+      if (!btn) return;
+      if (active) {
+        btn.classList.add('g-mode-vigilance-on');
+        btn.classList.add('g-mode-active');
+        const icon = btn.querySelector('.g-mode-icon');
+        if (icon) icon.textContent = '⏹';
+        btn.childNodes.forEach((n) => { if (n.nodeType === 3) n.textContent = 'Stop'; });
+      } else {
+        btn.classList.remove('g-mode-vigilance-on');
+        btn.classList.remove('g-mode-active');
+        const icon = btn.querySelector('.g-mode-icon');
+        if (icon) icon.textContent = '🛡';
+        btn.childNodes.forEach((n) => { if (n.nodeType === 3) n.textContent = 'Vigilance'; });
+      }
+    },
 
     /** Optimistically append a message bubble without waiting for a full re-render. */
     appendLiveMessage(message) {

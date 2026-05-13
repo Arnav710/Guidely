@@ -363,6 +363,7 @@ async function handleSidebarClosed() {
     _agentLoop.stopVigilanceMode('_', { onVigilanceClear: clearVigilanceOverlays, onMessage: () => {} }, { silent: true });
   }
   _syncFloatingButtonVigilance();
+  _sidebar?.setVigilanceActive?.(false);
 }
 
 async function loadModules() {
@@ -398,12 +399,14 @@ async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
     });
     _agentLoop.stopVigilanceMode(conversationId, _makeCallbacks(conversationId));
     _syncFloatingButtonVigilance();
+    _sidebar.setVigilanceActive?.(false);
     return;
   }
 
   if (mode !== 'vigilance' && _agentLoop?.isVigilanceActive?.()) {
     _agentLoop.stopVigilanceMode(conversationId, _makeCallbacks(conversationId), { silent: true });
     _syncFloatingButtonVigilance();
+    _sidebar.setVigilanceActive?.(false);
   }
 
   clearHighlight();
@@ -448,7 +451,7 @@ async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
   if (mode === 'vigilance') {
     _agentLoop.startVigilanceMode(conversationId, _makeCallbacks(conversationId));
     _syncFloatingButtonVigilance();
-    _sidebar.close?.({ silent: true });
+    _sidebar.setVigilanceActive?.(true);
     return;
   }
 
