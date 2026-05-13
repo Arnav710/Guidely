@@ -285,6 +285,13 @@ const SIDEBAR_CSS = `
     margin-right: 8%;
     border-bottom-left-radius: 4px;
   }
+  .g-msg-assistant[data-final="true"] {
+    background: #fffcfa;
+    border-color: #ffd5c3;
+    border-left: 3px solid #FF6B35;
+    font-size: 15.5px;
+    box-shadow: 0 2px 8px rgba(255,107,53,0.08);
+  }
   .g-msg-error {
     align-self: flex-start;
     background: #fff5f5;

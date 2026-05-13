@@ -52,8 +52,13 @@ export function renderThread(rootEl, messages) {
     rootEl.appendChild(_makeEmptyState(rootEl));
     return;
   }
-  for (const msg of (messages || [])) {
-    rootEl.appendChild(_makeBubble(msg));
+  // Find the index of the last assistant message to mark it as the final answer.
+  let lastAssistantIdx = -1;
+  (messages || []).forEach((m, i) => { if (m.role === 'assistant') lastAssistantIdx = i; });
+  for (let i = 0; i < (messages || []).length; i++) {
+    const bubble = _makeBubble(messages[i]);
+    if (i === lastAssistantIdx) bubble.setAttribute('data-final', 'true');
+    rootEl.appendChild(bubble);
   }
   rootEl.scrollTop = rootEl.scrollHeight;
 }
@@ -63,7 +68,15 @@ export function renderThread(rootEl, messages) {
  */
 export function appendMessage(rootEl, message) {
   if (!rootEl) return;
-  rootEl.appendChild(_makeBubble(message));
+  const bubble = _makeBubble(message);
+  if (message.role === 'assistant') {
+    // Clear any previous final marker — this new one is now the last answer.
+    rootEl.querySelectorAll('.g-msg-assistant[data-final="true"]').forEach((el) => {
+      el.removeAttribute('data-final');
+    });
+    bubble.setAttribute('data-final', 'true');
+  }
+  rootEl.appendChild(bubble);
   rootEl.scrollTop = rootEl.scrollHeight;
 }
 
