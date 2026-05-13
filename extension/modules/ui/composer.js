@@ -32,8 +32,8 @@ export function mountComposer(rootEl, { onSend } = {}) {
       <button type="button" id="g-send" aria-label="Send">Send</button>
     </div>
     <div class="g-mode-btns" id="g-mode-btns" role="group" aria-label="Choose how Guidely should help">
-      <button type="button" class="g-mode-btn" data-mode="summarize" title="Summarize what's on screen, or type a question to ask about it">
-        <span class="g-mode-icon">📄</span>Summarize
+      <button type="button" class="g-mode-btn" data-mode="summarize" title="Ask a question about what's on screen, or leave blank to get a summary">
+        <span class="g-mode-icon">🔍</span>Ask
       </button>
       <button type="button" class="g-mode-btn g-mode-active" data-mode="autonomous" title="Navigate, click and fill in forms for you">
         <span class="g-mode-icon">⚡</span>Do it for me
@@ -57,7 +57,7 @@ export function mountComposer(rootEl, { onSend } = {}) {
   let _selectedMode = 'autonomous';
 
   const DEFAULT_PLACEHOLDER = 'What do you need help with? (e.g. renew my license, explain what I\'m seeing on my screen…)';
-  const SUMMARIZE_PLACEHOLDER = 'Ask a question about what\'s on screen, or leave blank to summarize it.';
+  const SUMMARIZE_PLACEHOLDER = 'Type a question about what\'s on screen, or leave blank to summarize what you see.';
   const VIGILANCE_PLACEHOLDER = 'Optional note (or leave blank). Vigilance starts as soon as you tap the mode above.';
 
   function _selectMode(mode) {
