@@ -33,16 +33,16 @@ export function mountComposer(rootEl, { onSend } = {}) {
     </div>
     <div class="g-mode-btns" id="g-mode-btns" role="group" aria-label="Choose how Guidely should help">
       <button type="button" class="g-mode-btn" data-mode="summarize" title="Summarize what's on screen, or type a question to ask about it">
-        📄 Summarize
+        <span class="g-mode-icon">📄</span>Summarize
       </button>
       <button type="button" class="g-mode-btn g-mode-active" data-mode="autonomous" title="Navigate, click and fill in forms for you">
-        ⚡ Do it for me
+        <span class="g-mode-icon">⚡</span>Do it for me
       </button>
       <button type="button" class="g-mode-btn" data-mode="guide" title="Highlight what you should click — no automation">
-        👆 Guide me
+        <span class="g-mode-icon">👆</span>Guide me
       </button>
       <button type="button" class="g-mode-btn" data-mode="vigilance" title="Watch the page for scam-like patterns — highlights risky spots">
-        🛡 Vigilance
+        <span class="g-mode-icon">🛡</span>Vigilance
       </button>
     </div>
     <p class="g-hint" id="g-composer-hint">Enter to send · Shift+Enter for new line</p>

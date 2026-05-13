@@ -531,8 +531,8 @@ const SIDEBAR_CSS = `
   }
   .g-mode-btn {
     flex: 1;
-    padding: 7px 5px;
-    font-size: 12px;
+    padding: 8px 4px 7px;
+    font-size: 11px;
     font-weight: 600;
     color: #666;
     background: #f5f5f5;
@@ -543,7 +543,12 @@ const SIDEBAR_CSS = `
     transition: background 0.12s, border-color 0.12s, color 0.12s;
     line-height: 1.3;
     text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
   }
+  .g-mode-btn .g-mode-icon { font-size: 18px; line-height: 1; }
   .g-mode-btn:hover:not(:disabled):not(.g-mode-active) {
     background: #fff2ed;
     border-color: #FF6B35;
