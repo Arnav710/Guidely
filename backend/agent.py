@@ -32,7 +32,7 @@ from prompt import AGENT_SYSTEM_PROMPT, AGENT_PLAN_PROMPT
 logger = logging.getLogger(__name__)
 
 # After this many agent loop iterations, force a terminal "done" so the user gets a chat answer.
-_AGENT_FORCE_DONE_AT_ITERATION = 18
+_AGENT_FORCE_DONE_AT_ITERATION = 10
 
 
 def _apply_loop_budget_force_done(
@@ -260,23 +260,30 @@ def _build_agent_context(request: AgentStepRequest) -> str:
         lines.append("")
 
         # Detect when the model is spinning on the same observation tool with the
-        # same arguments — warn it explicitly so it stops repeating and acts.
+        # same arguments — hard-stop after 3 repeats, warn after 2.
         _OBS_TOOLS = {"get_page_text", "get_elements", "get_sections", "search_page"}
-        recent = request.last_tool_calls[-3:]
-        if len(recent) >= 2:
-            keys = [
-                f"{tc.tool}:{_compact_params(tc.params)}"
-                for tc in recent
-                if tc.tool in _OBS_TOOLS
-            ]
-            if len(keys) >= 2 and len(set(keys)) == 1:
-                lines.append(
-                    f"WARNING: You have called {recent[-1].tool}({_compact_params(recent[-1].params)}) "
-                    "multiple times in a row and received the same result. "
-                    "Do NOT call it again. Either summarise what you have observed and call done, "
-                    "or try a DIFFERENT tool or section."
-                )
-                lines.append("")
+        recent = request.last_tool_calls[-4:]
+        obs_keys = [
+            f"{tc.tool}:{_compact_params(tc.params)}"
+            for tc in recent
+            if tc.tool in _OBS_TOOLS
+        ]
+        if len(obs_keys) >= 3 and len(set(obs_keys[-3:])) == 1:
+            # 3+ identical obs calls in a row — force ask_user so the user isn't stuck
+            lines.append(
+                "HARD STOP: You have called the same observation tool 3+ times with no progress. "
+                "You MUST call ask_user now to tell the user you are stuck and need more information, "
+                "or call done with what you have."
+            )
+            lines.append("")
+        elif len(obs_keys) >= 2 and len(set(obs_keys[-2:])) == 1:
+            lines.append(
+                f"WARNING: You have called {recent[-1].tool}({_compact_params(recent[-1].params)}) "
+                "multiple times in a row and received the same result. "
+                "Do NOT call it again. Either summarise what you have observed and call done, "
+                "or try a DIFFERENT tool or section."
+            )
+            lines.append("")
 
     # Latest observation
     if request.observation:
@@ -287,18 +294,18 @@ def _build_agent_context(request: AgentStepRequest) -> str:
 
     # Exploration budget: client sends monotonically increasing loop_iteration (1-based).
     n = int(getattr(request, "loop_iteration", 0) or 0)
-    if n >= 6:
+    if n >= 4:
         lines.append(
             f"NOTE: Agent step #{n}. If the goal is to FIND or EXPLAIN information and you already have "
             "enough from this page or your last observation, call done with a clear summary in "
             '"message" for the user. Avoid another web_search or navigation unless still missing the core facts.'
         )
-    if n >= 12:
+    if n >= 7:
         lines.append(
             f"STEP BUDGET ({n}): Prefer done with a helpful message summary for the user, "
             "or ask_user. Do not chain more navigations unless strictly necessary."
         )
-    if n >= 16:
+    if n >= 9:
         lines.append(
             "FINAL BUDGET WARNING: Your next tool should be done or ask_user only — no more browsing."
         )
@@ -326,8 +333,12 @@ async def run_agent_start(request: AgentStartRequest) -> AgentStartResponse:
         parts.append(f"Page title: {request.page_title}")
     if request.dom_summary:
         parts.append(f"Visible page elements: {request.dom_summary}")
-    # Explicit signal so the model doesn't ask for context that's already on screen.
-    if request.page_url or request.page_title:
+    # Explicit signal so the model doesn't ask for context that's already on screen —
+    # but only when the page is plausibly relevant to the goal (not a generic start page).
+    generic_pages = {"google.com", "google.co", "bing.com", "yahoo.com", "duckduckgo.com", "about:blank", "chrome://"}
+    page_url_lower = (request.page_url or "").lower()
+    is_generic_page = not page_url_lower or any(g in page_url_lower for g in generic_pages)
+    if (request.page_url or request.page_title) and not is_generic_page:
         parts.append(
             "NOTE: The user is already on this page. "
             "If the goal can be addressed using the content visible on this page, "
@@ -408,6 +419,34 @@ async def run_agent_step(request: AgentStepRequest) -> AgentStepResponse:
     3. Handle server-side tools: web_search (second LLM call), replan (plan generation)
     4. Return the tool call to the extension
     """
+    # Hard-stop before calling the LLM if the model has been looping on the same
+    # observation tool — saves a round-trip and gives a faster user response.
+    _OBS_TOOLS_SET = {"get_page_text", "get_elements", "get_sections", "search_page"}
+    if request.last_tool_calls and len(request.last_tool_calls) >= 3:
+        last3 = request.last_tool_calls[-3:]
+        keys3 = [
+            f"{tc.tool}:{_compact_params(tc.params)}"
+            for tc in last3
+            if tc.tool in _OBS_TOOLS_SET
+        ]
+        if len(keys3) == 3 and len(set(keys3)) == 1:
+            logger.info(
+                "run_agent_step pre-empting LLM — same obs tool called 3x: %s",
+                keys3[0],
+            )
+            return AgentStepResponse(
+                tool="ask_user",
+                params={
+                    "question": (
+                        "I'm having trouble interacting with this page. "
+                        "Could you tell me more about what you'd like me to do, "
+                        "or scroll to the section you need help with?"
+                    )
+                },
+                display="I need your help to continue.",
+                thought="Stuck in observation loop — asking user for guidance.",
+            )
+
     user_text = _build_agent_context(request)
     has_vision = screenshot_usable(request.screenshot)
 
