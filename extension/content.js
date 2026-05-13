@@ -42,29 +42,59 @@ const BTN_STYLES = `
     background: #991b1b !important;
   }
 
-  /* Vigilance mode — risk outline + floating note (separate from guide ring). */
-  .guidely-vigilance-risk {
-    outline: 3px solid #dc2626 !important;
-    outline-offset: 2px !important;
-    scroll-margin: 72px;
-  }
+  /* Vigilance mode — single summary popup fixed bottom-right. */
   .guidely-vigil-popup-wrap {
     position: fixed;
     z-index: 2147483645;
-    max-width: 280px;
+    bottom: 80px;
+    right: 16px;
+    width: 300px;
     font-family: system-ui, -apple-system, sans-serif;
     font-size: 13px;
-    line-height: 1.35;
+    line-height: 1.4;
     color: #111827;
     background: #fff7f7;
     border: 1px solid #fecaca;
     border-left: 4px solid #dc2626;
-    border-radius: 8px;
-    padding: 10px 10px 8px;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+    border-radius: 10px;
+    padding: 12px 12px 10px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.22);
   }
-  .guidely-vigil-popup-wrap strong { display: block; margin-bottom: 4px; color: #991b1b; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
-  .guidely-vigil-popup-wrap p { margin: 0 0 8px; }
+  .guidely-vigil-popup-wrap .g-vigil-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .guidely-vigil-popup-wrap .g-vigil-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #991b1b;
+    flex: 1;
+  }
+  .guidely-vigil-popup-wrap .g-vigil-flag {
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #fecaca;
+  }
+  .guidely-vigil-popup-wrap .g-vigil-flag:last-of-type {
+    border-bottom: none;
+    margin-bottom: 6px;
+  }
+  .guidely-vigil-popup-wrap .g-vigil-reason {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #b91c1c;
+    margin-bottom: 2px;
+  }
+  .guidely-vigil-popup-wrap .g-vigil-explanation {
+    margin: 0;
+    color: #374151;
+    font-size: 12.5px;
+  }
   .guidely-vigil-popup-wrap button {
     font: inherit;
     font-size: 12px;
@@ -75,6 +105,8 @@ const BTN_STYLES = `
     background: #fff;
     color: #b91c1c;
     cursor: pointer;
+    width: 100%;
+    margin-top: 4px;
   }
   .guidely-vigil-popup-wrap button:hover { background: #fef2f2; }
 
@@ -264,85 +296,49 @@ const _vigilanceMarked = [];
 function clearVigilanceOverlays() {
   while (_vigilanceMarked.length) {
     const row = _vigilanceMarked.pop();
-    try {
-      row.el?.classList?.remove('guidely-vigilance-risk');
-    } catch { /* ignore */ }
-    try {
-      row.wrap?.remove();
-    } catch { /* ignore */ }
+    try { row.el?.classList?.remove('guidely-vigilance-risk'); } catch { /* ignore */ }
+    try { row.wrap?.remove(); } catch { /* ignore */ }
   }
 }
 
 /**
- * @param {{ flags: Array<{ item_number: number, reason: string, explanation: string }>, selectorMap: Record<number, string> }} payload
+ * Show a single summary popup listing all flags. No per-element red outlines.
+ * @param {{ flags: Array<{ item_number: number, reason: string, explanation: string }>, pageSummary: string }} payload
  */
 function applyVigilanceFlags(payload) {
   injectBtnStyles();
   clearVigilanceOverlays();
-  const flags = payload?.flags || [];
-  const map = payload?.selectorMap || {};
-  // Track used vertical positions so overlapping popups are staggered.
-  const usedPositions = [];
-  for (let i = 0; i < flags.length; i += 1) {
-    const f = flags[i];
-    const num = Number(f?.item_number);
-    const sel = map[num];
-    if (!sel) continue;
-    let el = null;
-    try {
-      el = document.querySelector(sel);
-    } catch { /* ignore */ }
-    if (!el) el = _querySelectorWithIdFallback(sel);
-    if (!el || !_roughVisible(el)) continue;
-    el.classList.add('guidely-vigilance-risk');
+  const flags = (payload?.flags || []).filter((f) => f?.reason && f?.explanation);
+  if (flags.length === 0) return;
 
-    const wrap = document.createElement('div');
-    wrap.className = 'guidely-vigil-popup-wrap';
-    const rect = el.getBoundingClientRect();
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - 296));
-    let topPx = rect.bottom + 8;
-    if (topPx > window.innerHeight - 120) {
-      topPx = Math.max(8, rect.top - 130);
-    }
+  const wrap = document.createElement('div');
+  wrap.className = 'guidely-vigil-popup-wrap';
 
-    // Stagger: if another popup already occupies within 140px of this position, push down.
-    let attempts = 0;
-    while (attempts < 10 && usedPositions.some((p) => Math.abs(p - topPx) < 140)) {
-      topPx += 148;
-      attempts++;
-    }
-    // If pushed off screen bottom, stack above the element instead, from top.
-    if (topPx + 120 > window.innerHeight) {
-      topPx = 8 + usedPositions.length * 148;
-    }
-    usedPositions.push(topPx);
+  const header = document.createElement('div');
+  header.className = 'g-vigil-header';
+  header.innerHTML = `<span style="font-size:18px">⚠️</span><span class="g-vigil-title">Guidely spotted ${flags.length} warning${flags.length > 1 ? 's' : ''}</span>`;
+  wrap.appendChild(header);
 
-    wrap.style.top = `${topPx}px`;
-    wrap.style.left = `${left}px`;
-
-    const title = document.createElement('strong');
-    title.textContent = _VIGILANCE_REASON_LABELS[f.reason] || 'Heads up';
-
-    const p = document.createElement('p');
-    p.textContent = String(f.explanation || '').slice(0, 320);
-
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.textContent = 'Acknowledge';
-
-    btn.addEventListener('click', () => {
-      try { el.classList.remove('guidely-vigilance-risk'); } catch { /* ignore */ }
-      try { wrap.remove(); } catch { /* ignore */ }
-      const ix = _vigilanceMarked.findIndex((r) => r.wrap === wrap);
-      if (ix >= 0) _vigilanceMarked.splice(ix, 1);
-    });
-
-    wrap.appendChild(title);
-    wrap.appendChild(p);
-    wrap.appendChild(btn);
-    document.body.appendChild(wrap);
-    _vigilanceMarked.push({ el, wrap });
+  for (const f of flags) {
+    const flagEl = document.createElement('div');
+    flagEl.className = 'g-vigil-flag';
+    const label = _VIGILANCE_REASON_LABELS[f.reason] || 'Unusual pattern';
+    flagEl.innerHTML = `<span class="g-vigil-reason">${label}</span><p class="g-vigil-explanation">${String(f.explanation || '').slice(0, 220)}</p>`;
+    wrap.appendChild(flagEl);
   }
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = 'Got it — dismiss';
+  btn.addEventListener('click', () => {
+    wrap.remove();
+    const ix = _vigilanceMarked.findIndex((r) => r.wrap === wrap);
+    if (ix >= 0) _vigilanceMarked.splice(ix, 1);
+  });
+  wrap.appendChild(btn);
+
+  document.body.appendChild(wrap);
+  _vigilanceMarked.push({ el: null, wrap });
 }
 
 // ── Module handles ────────────────────────────────────────────────────────────
