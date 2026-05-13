@@ -332,6 +332,8 @@ function applyVigilanceFlags(payload) {
     wrap.remove();
     const ix = _vigilanceMarked.findIndex((r) => r.wrap === wrap);
     if (ix >= 0) _vigilanceMarked.splice(ix, 1);
+    // Pause the next scan for 40s so it doesn't immediately re-trigger.
+    _agentLoop?.pauseVigilance?.(60_000);
   });
   wrap.appendChild(btn);
 

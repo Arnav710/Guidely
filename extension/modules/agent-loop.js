@@ -879,10 +879,19 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
 let _vigilanceActive = false;
 let _vigilanceTimer = null;
 let _vigilanceBusy = false;
+let _vigilancePausedUntil = 0;
 
 /** @returns {boolean} */
 export function isVigilanceActive() {
   return _vigilanceActive;
+}
+
+/**
+ * Pause the next vigilance scan for `ms` milliseconds (e.g. after a warning is dismissed).
+ * @param {number} ms
+ */
+export function pauseVigilance(ms) {
+  _vigilancePausedUntil = Date.now() + ms;
 }
 
 /**
@@ -901,6 +910,7 @@ export function stopVigilanceMode(conversationId, callbacks = {}, opts = {}) {
     _vigilanceTimer = null;
   }
   _vigilanceBusy = false;
+  _vigilancePausedUntil = 0;
   callbacks.onVigilanceClear?.();
   if (!silent) {
     callbacks.onMessage?.({ role: 'system', content: 'Vigilance mode stopped.' });
@@ -983,6 +993,12 @@ export function startVigilanceMode(conversationId, callbacks = {}) {
 
   const tick = async () => {
     if (!_vigilanceActive) return;
+    // If a warning was recently dismissed, wait out the remaining pause.
+    const pauseRemaining = _vigilancePausedUntil - Date.now();
+    if (pauseRemaining > 0) {
+      scheduleNext(pauseRemaining);
+      return;
+    }
     if (_vigilanceBusy) {
       scheduleNext(10_000);
       return;
