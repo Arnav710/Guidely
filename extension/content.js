@@ -281,6 +281,8 @@ function applyVigilanceFlags(payload) {
   clearVigilanceOverlays();
   const flags = payload?.flags || [];
   const map = payload?.selectorMap || {};
+  // Track used vertical positions so overlapping popups are staggered.
+  const usedPositions = [];
   for (let i = 0; i < flags.length; i += 1) {
     const f = flags[i];
     const num = Number(f?.item_number);
@@ -293,7 +295,6 @@ function applyVigilanceFlags(payload) {
     if (!el) el = _querySelectorWithIdFallback(sel);
     if (!el || !_roughVisible(el)) continue;
     el.classList.add('guidely-vigilance-risk');
-    try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* ignore */ }
 
     const wrap = document.createElement('div');
     wrap.className = 'guidely-vigil-popup-wrap';
@@ -303,6 +304,19 @@ function applyVigilanceFlags(payload) {
     if (topPx > window.innerHeight - 120) {
       topPx = Math.max(8, rect.top - 130);
     }
+
+    // Stagger: if another popup already occupies within 140px of this position, push down.
+    let attempts = 0;
+    while (attempts < 10 && usedPositions.some((p) => Math.abs(p - topPx) < 140)) {
+      topPx += 148;
+      attempts++;
+    }
+    // If pushed off screen bottom, stack above the element instead, from top.
+    if (topPx + 120 > window.innerHeight) {
+      topPx = 8 + usedPositions.length * 148;
+    }
+    usedPositions.push(topPx);
+
     wrap.style.top = `${topPx}px`;
     wrap.style.left = `${left}px`;
 
