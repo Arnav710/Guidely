@@ -207,6 +207,14 @@ const SIDEBAR_CSS = `
     gap: 10px;
   }
 
+  @keyframes g-msg-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .g-msg {
+    animation: g-msg-in 0.18s ease-out both;
+  }
+
   /* ── Empty state ── */
   .g-empty-state {
     display: flex;
