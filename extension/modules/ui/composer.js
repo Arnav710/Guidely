@@ -23,9 +23,9 @@ export function mountComposer(rootEl, { onSend } = {}) {
     <div class="g-composer-row">
       <textarea
         id="g-textarea"
-        rows="2"
+        rows="3"
         maxlength="2000"
-        placeholder="What do you need help with? (e.g. renew my license, pay my bill…)"
+        placeholder="What do you need help with? (e.g. renew my license, explain what I'm seeing on my screen…)"
         aria-label="Message to Guidely"
       ></textarea>
       ${hasSpeech ? '<button type="button" id="g-mic" aria-label="Speak" title="Hold to speak">🎤</button>' : ''}
@@ -56,7 +56,7 @@ export function mountComposer(rootEl, { onSend } = {}) {
 
   let _selectedMode = 'autonomous';
 
-  const DEFAULT_PLACEHOLDER = 'What do you need help with? (e.g. renew my license, pay my bill…)';
+  const DEFAULT_PLACEHOLDER = 'What do you need help with? (e.g. renew my license, explain what I\'m seeing on my screen…)';
   const SUMMARIZE_PLACEHOLDER = 'Ask a question about what\'s on screen, or leave blank to summarize it.';
   const VIGILANCE_PLACEHOLDER = 'Optional note (or leave blank). Vigilance starts as soon as you tap the mode above.';
 

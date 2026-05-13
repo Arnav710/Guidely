@@ -386,14 +386,14 @@ const SIDEBAR_CSS = `
   .g-composer-row { display: flex; gap: 8px; align-items: flex-end; }
   #g-textarea {
     flex: 1;
-    min-height: 56px;
+    min-height: 72px;
     max-height: 140px;
     padding: 10px 12px;
     font-size: 15px;
     line-height: 1.45;
     border: 1.5px solid #ddd;
     border-radius: 12px;
-    resize: vertical;
+    resize: none;
     box-sizing: border-box;
     font-family: inherit;
   }
