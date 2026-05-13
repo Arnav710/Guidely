@@ -42,7 +42,7 @@ export function mountComposer(rootEl, { onSend } = {}) {
         <span class="g-mode-icon">👆</span>Guide me
       </button>
       <button type="button" class="g-mode-btn" data-mode="vigilance" title="Watch the page for scam-like patterns — highlights risky spots">
-        <span class="g-mode-icon">🛡</span>Vigilance
+        <span class="g-mode-icon">🛡</span><span class="g-mode-label">Vigilance</span>
       </button>
     </div>
     <p class="g-hint" id="g-composer-hint">Enter to send · Shift+Enter for new line</p>
@@ -70,7 +70,7 @@ export function mountComposer(rootEl, { onSend } = {}) {
       hint.textContent = 'Enter to send · Shift+Enter for new line';
     } else if (mode === 'vigilance') {
       ta.placeholder = VIGILANCE_PLACEHOLDER;
-      hint.textContent = 'Starts immediately · Sidebar closes · Red Stop button on the page · Not legal advice';
+      hint.textContent = 'Starts immediately · Click Stop to stop · Not legal advice';
     } else {
       ta.placeholder = DEFAULT_PLACEHOLDER;
       hint.textContent = 'Enter to send · Shift+Enter for new line';
@@ -80,13 +80,14 @@ export function mountComposer(rootEl, { onSend } = {}) {
   modeBtns.querySelectorAll('.g-mode-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const mode = btn.dataset.mode;
-      const prev = _selectedMode;
-      _selectMode(mode);
-      if (mode === 'vigilance' && prev !== 'vigilance') {
+      if (mode === 'vigilance') {
+        // Always fire for vigilance — content.js decides start vs stop based on isVigilanceActive.
         if (ta.disabled) return;
         onSend?.({ text: '', mode: 'vigilance' });
         ta.value = '';
+        return;
       }
+      _selectMode(mode);
     });
   });
 

@@ -734,21 +734,20 @@ export async function mountSidebar({ onSubmit, onSidebarClose } = {}) {
     close: closeSidebar,
 
     /** Toggle the vigilance mode button between "start" and "stop" states. */
-    setVigilanceActive(active) {
+    setVigilanceActive(isActive) {
       const btn = sidebar.querySelector('.g-mode-btn[data-mode="vigilance"]');
       if (!btn) return;
-      if (active) {
+      const icon = btn.querySelector('.g-mode-icon');
+      const label = btn.querySelector('.g-mode-label');
+      if (isActive) {
         btn.classList.add('g-mode-vigilance-on');
-        btn.classList.add('g-mode-active');
-        const icon = btn.querySelector('.g-mode-icon');
         if (icon) icon.textContent = '⏹';
-        btn.childNodes.forEach((n) => { if (n.nodeType === 3) n.textContent = 'Stop'; });
+        if (label) label.textContent = 'Stop';
       } else {
         btn.classList.remove('g-mode-vigilance-on');
         btn.classList.remove('g-mode-active');
-        const icon = btn.querySelector('.g-mode-icon');
         if (icon) icon.textContent = '🛡';
-        btn.childNodes.forEach((n) => { if (n.nodeType === 3) n.textContent = 'Vigilance'; });
+        if (label) label.textContent = 'Vigilance';
       }
     },
 

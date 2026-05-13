@@ -974,7 +974,7 @@ export function startVigilanceMode(conversationId, callbacks = {}) {
   _vigilanceActive = true;
   callbacks.onMessage?.({
     role: 'system',
-    content: 'Vigilance on: checking every 10 seconds for pressure tactics, money requests, odd links, and other red flags. Send again to stop.',
+    content: 'Vigilance on: checking every 10 seconds for pressure tactics, money requests, odd links, and other red flags. Click the Vigilance button again to stop.',
   });
 
   const scheduleNext = (delayMs) => {

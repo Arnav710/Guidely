@@ -31,24 +31,22 @@ const BTN_STYLES = `
   }
   #guidely-btn:hover { background: #e05a28; transform: scale(1.04); }
   #guidely-btn:disabled { background: #aaa; cursor: not-allowed; transform: none; }
-  #g-sidebar.g-open ~ #guidely-btn:not(.guidely-btn--vigilance-stop) {
+  #g-sidebar.g-open ~ #guidely-btn {
     display: none !important;
   }
   #guidely-btn.guidely-btn--vigilance-stop {
-    background: #b91c1c !important;
-    box-shadow: 0 4px 18px rgba(185, 28, 28, 0.45);
-  }
-  #guidely-btn.guidely-btn--vigilance-stop:hover {
-    background: #991b1b !important;
+    display: none !important;
   }
 
   /* Vigilance mode — single summary popup fixed bottom-right. */
   .guidely-vigil-popup-wrap {
     position: fixed;
     z-index: 2147483645;
-    bottom: 80px;
+    bottom: 16px;
     right: 16px;
     width: 300px;
+    max-height: 60vh;
+    overflow-y: auto;
     font-family: system-ui, -apple-system, sans-serif;
     font-size: 13px;
     line-height: 1.4;
@@ -338,6 +336,9 @@ function applyVigilanceFlags(payload) {
   wrap.appendChild(btn);
 
   document.body.appendChild(wrap);
+  // If the Guidely sidebar is open, shift the popup left so it's not hidden behind it.
+  const sidebarOpen = !!document.querySelector('#g-sidebar.g-open');
+  if (sidebarOpen) wrap.style.right = '420px';
   _vigilanceMarked.push({ el: null, wrap });
 }
 
@@ -386,17 +387,11 @@ async function loadModules() {
 async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
   const rawTrim = (text || '').trim();
 
-  // Vigilance: while active, Send again stops (empty message after send counts as stop).
+  // Vigilance: while active, clicking the button again stops it.
   if (mode === 'vigilance' && _agentLoop?.isVigilanceActive?.()) {
     clearVigilanceOverlays();
     clearHighlight();
     _stopSpeech();
-    await _store.appendMessage(conversationId, {
-      role: 'user',
-      content: rawTrim || 'Stop vigilance',
-      pageUrl: window.location.href,
-      pageTitle: document.title,
-    });
     _agentLoop.stopVigilanceMode(conversationId, _makeCallbacks(conversationId));
     _syncFloatingButtonVigilance();
     _sidebar.setVigilanceActive?.(false);
@@ -412,10 +407,16 @@ async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
   clearHighlight();
   _stopSpeech();
 
-  let displayText = rawTrim || '(What should I do here?)';
-  if (mode === 'vigilance' && (!rawTrim || displayText === '(What should I do here?)')) {
-    displayText = 'Start vigilance';
+  // For vigilance toggle, skip the user message bubble — the system message from
+  // startVigilanceMode is enough feedback.
+  if (mode === 'vigilance') {
+    _agentLoop.startVigilanceMode(conversationId, _makeCallbacks(conversationId));
+    _syncFloatingButtonVigilance();
+    _sidebar.setVigilanceActive?.(true);
+    return;
   }
+
+  const displayText = rawTrim || '(What should I do here?)';
 
   await _store.appendMessage(conversationId, {
     role: 'user',
@@ -433,7 +434,7 @@ async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
 
   if (session?.status === 'running') return;
 
-  if ((!rawTrim || displayText === '(What should I do here?)') && mode !== 'vigilance') {
+  if (!rawTrim) {
     _sidebar.appendLiveMessage({ role: 'system', content: "Please tell me what you'd like help with." });
     return;
   }
@@ -445,13 +446,6 @@ async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
 
   if (mode === 'guide') {
     await _agentLoop.runGuideMode(conversationId, displayText, highlightElement, _makeCallbacks(conversationId));
-    return;
-  }
-
-  if (mode === 'vigilance') {
-    _agentLoop.startVigilanceMode(conversationId, _makeCallbacks(conversationId));
-    _syncFloatingButtonVigilance();
-    _sidebar.setVigilanceActive?.(true);
     return;
   }
 
@@ -549,20 +543,7 @@ function getOrCreateButton() {
 }
 
 function _syncFloatingButtonVigilance() {
-  const btn = document.getElementById('guidely-btn');
-  if (!btn || !_agentLoop) return;
-  const on = typeof _agentLoop.isVigilanceActive === 'function' && _agentLoop.isVigilanceActive();
-  if (on) {
-    btn.textContent = 'Stop';
-    btn.setAttribute('aria-label', 'Stop vigilance');
-    btn.title = 'Vigilance is on — scanning the page. Click to stop.';
-    btn.classList.add('guidely-btn--vigilance-stop');
-  } else {
-    btn.textContent = '💡 Help me';
-    btn.setAttribute('aria-label', 'Open Guidely');
-    btn.removeAttribute('title');
-    btn.classList.remove('guidely-btn--vigilance-stop');
-  }
+  // No-op: vigilance start/stop is controlled exclusively by the in-sidebar button.
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -598,24 +579,7 @@ async function init() {
   }
 
   const btn = getOrCreateButton();
-  btn.addEventListener('click', async () => {
-    if (_agentLoop?.isVigilanceActive?.()) {
-      clearVigilanceOverlays();
-      const active = await _store.getActive();
-      if (active?.id) {
-        await _store.appendMessage(active.id, {
-          role: 'system',
-          content: 'Vigilance stopped.',
-          pageUrl: window.location.href,
-          pageTitle: document.title,
-        }).catch(() => {});
-        _agentLoop.stopVigilanceMode(active.id, _makeCallbacks(active.id), { silent: true });
-      } else {
-        _agentLoop.stopVigilanceMode('_', { onVigilanceClear: clearVigilanceOverlays, onMessage: () => {} }, { silent: true });
-      }
-      _syncFloatingButtonVigilance();
-      return;
-    }
+  btn.addEventListener('click', () => {
     _sidebar.open();
   });
 

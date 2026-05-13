@@ -223,7 +223,7 @@ function _makeBubble(msg) {
 const EXAMPLE_PROMPTS = [
   { emoji: '📄', text: 'Explain what I\'m seeing on my screen' },
   { emoji: '🔄', text: 'Help me renew my driver\'s license' },
-  { emoji: '💊', text: 'Help me refill my prescription online' },
+  { emoji: '🛡', text: 'Check if this website is safe' },
 ];
 
 function _makeEmptyState(rootEl) {
