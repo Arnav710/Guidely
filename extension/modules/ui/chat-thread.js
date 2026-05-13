@@ -47,6 +47,11 @@ const TOOL_ICON = {
  */
 export function renderThread(rootEl, messages) {
   rootEl.innerHTML = '';
+  const nonSystem = (messages || []).filter((m) => m.role !== 'system');
+  if (nonSystem.length === 0) {
+    rootEl.appendChild(_makeEmptyState(rootEl));
+    return;
+  }
   for (const msg of (messages || [])) {
     rootEl.appendChild(_makeBubble(msg));
   }
@@ -200,4 +205,33 @@ function _makeBubble(msg) {
   div.setAttribute('data-msg-id', msg.id || '');
   div.textContent = msg.content || '';
   return div;
+}
+
+const EXAMPLE_PROMPTS = [
+  { emoji: '📄', text: 'Explain what I\'m seeing on my screen' },
+  { emoji: '🔄', text: 'Help me renew my driver\'s license' },
+  { emoji: '💊', text: 'Help me refill my prescription online' },
+];
+
+function _makeEmptyState(rootEl) {
+  const wrap = document.createElement('div');
+  wrap.className = 'g-empty-state';
+  wrap.innerHTML = `
+    <div class="g-empty-icon">👋</div>
+    <p class="g-empty-greeting">Hi! I'm Guidely.</p>
+    <p class="g-empty-sub">I can help you navigate websites,<br>understand what you're looking at,<br>and get things done online.</p>
+    <div class="g-empty-chips">
+      ${EXAMPLE_PROMPTS.map((p) => `<button class="g-empty-chip" type="button">${p.emoji} ${esc(p.text)}</button>`).join('')}
+    </div>
+  `;
+  wrap.querySelectorAll('.g-empty-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const textarea = document.getElementById('g-textarea');
+      if (textarea) {
+        textarea.value = btn.textContent.trim().replace(/^[\p{Emoji}\s]+/u, '').trim();
+        textarea.focus();
+      }
+    });
+  });
+  return wrap;
 }

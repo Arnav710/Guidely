@@ -206,6 +206,52 @@ const SIDEBAR_CSS = `
     flex-direction: column;
     gap: 10px;
   }
+
+  /* ── Empty state ── */
+  .g-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    padding: 24px 20px 16px;
+    text-align: center;
+    gap: 12px;
+  }
+  .g-empty-icon { font-size: 44px; line-height: 1; }
+  .g-empty-greeting {
+    font-size: 17px;
+    font-weight: 700;
+    color: #222;
+    margin: 0;
+  }
+  .g-empty-sub {
+    font-size: 14px;
+    color: #888;
+    margin: 0;
+    line-height: 1.5;
+  }
+  .g-empty-chips {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    margin-top: 4px;
+  }
+  .g-empty-chip {
+    background: #fff;
+    border: 1.5px solid #e8e8e8;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #444;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    transition: border-color 0.15s, background 0.15s;
+    line-height: 1.4;
+  }
+  .g-empty-chip:hover { border-color: #FF6B35; background: #fff7f4; color: #FF6B35; }
   .g-msg {
     max-width: 90%;
     padding: 11px 14px;
