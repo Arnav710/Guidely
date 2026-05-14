@@ -31,7 +31,7 @@ from models import (
     VigilanceFlagOut,
 )
 from ollama_client import (
-    analyze_guidely,
+    analyze_lumineer,
     call_ollama_text,
     call_ollama_multimodal,
     extract_json,
@@ -61,7 +61,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Guidely Backend", version="1.0.0")
+app = FastAPI(title="Lumineer Backend", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -127,7 +127,7 @@ async def analyze(
     screenshot_b64 = s if len(s) >= MIN_SCREENSHOT_B64_CHARS else None
 
     try:
-        result = await analyze_guidely(
+        result = await analyze_lumineer(
             request.dom_map,
             request.history,
             screenshot_b64=screenshot_b64,

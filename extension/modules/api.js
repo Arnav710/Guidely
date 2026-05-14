@@ -1,5 +1,5 @@
 /**
- * api.js — thin fetch wrappers for all Guidely backend endpoints.
+ * api.js — thin fetch wrappers for all Lumineer backend endpoints.
  * All functions throw on network error or non-OK status (with a user-friendly message).
  */
 

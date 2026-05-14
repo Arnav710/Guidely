@@ -1,6 +1,8 @@
-# Guidely
+# Lumineer
 
-> AI browser co-pilot for seniors — local-first, powered by Gemma 4 via Ollama.
+> **Lighting the safe way forward**
+
+AI browser co-pilot for seniors — local-first, powered by Gemma 4 via Ollama.
 
 A Chrome extension that helps elderly users navigate any website by capturing a screenshot and reading the page's interactive elements, then using a Gemma 4 model (running locally via Ollama) to give one clear, plain-English instruction and highlight the exact element to interact with.
 
@@ -20,7 +22,7 @@ A Chrome extension that helps elderly users navigate any website by capturing a 
 ### 1. Pull the model
 
 ```bash
-# Default target: multimodal ~9B (Guidely prefers this over 2B when installed)
+# Default target: multimodal ~9B (Lumineer prefers this over 2B when installed)
 ollama pull gemma4:e4b
 
 # Smaller / larger options:
@@ -46,8 +48,8 @@ uvicorn main:app --port 8000
 1. Open `chrome://extensions`
 2. Enable **Developer mode** (top-right toggle)
 3. Click **Load unpacked** → select the `extension/` folder
-4. The Guidely icon appears in your toolbar
-5. If Chrome shows a permission prompt, **Allow** — Guidely needs broad site access so `captureVisibleTab` can screenshot normal pages (e.g. google.com). Screenshots are only sent to your local backend.
+4. The Lumineer icon appears in your toolbar
+5. If Chrome shows a permission prompt, **Allow** — Lumineer needs broad site access so `captureVisibleTab` can screenshot normal pages (e.g. google.com). Screenshots are only sent to your local backend.
 
 ### 4. Use it
 
@@ -63,7 +65,7 @@ The repo has a top-level `tools/` package. The model can request **`web_search`*
 
 ### Via the extension popup
 
-1. Click the Guidely toolbar icon
+1. Click the Lumineer toolbar icon
 2. Select a model from the **Active Model** dropdown (only installed models appear)
 3. Click **Switch Model**
 
@@ -99,7 +101,7 @@ curl -X POST http://localhost:8000/analyze \
 
 ## Verifying Ollama is really called
 
-Guidely does call Ollama on every successful `/analyze` (no shortcut). Replies can feel fast on a GPU, especially for short JSON.
+Lumineer does call Ollama on every successful `/analyze` (no shortcut). Replies can feel fast on a GPU, especially for short JSON.
 
 1. **Trace mode** — add `?trace=1` to the analyze URL. The JSON response includes `trace` with `ollama_elapsed_ms`, `image_base64_chars`, `dom_element_count`, `json_parsed_ok`, etc. (no screenshot or prompt text).
 
@@ -109,7 +111,7 @@ Guidely does call Ollama on every successful `/analyze` (no shortcut). Replies c
 
 2. **Server logs** — run uvicorn with `--log-level info` and watch for lines like `ollama ok model=... elapsed_ms=...`.
 
-3. **Extension** — in `extension/content.js`, set `GUIDELY_DEBUG_TRACE = true`, reload the extension, then ask again; the sidebar footer shows the same trace summary.
+3. **Extension** — in the page DevTools console, set `window.__LUMINEER_DEBUG__ = true`, reload the extension, then ask again for verbose client logging (see `extension/modules/agent-loop.js`).
 
 If Ollama returns an error in the JSON body (HTTP 200 with `"error": "..."`), the API now returns **503** with that message instead of a blank or generic answer.
 
@@ -158,7 +160,6 @@ gemma4:31b  →  gemma4:26b  →  gemma4:e4b  →  gemma4:e2b  →  gemma4:2b  �
 ## File map
 
 ```
-guidely/
 ├── tools/
 │   ├── web_search.py    # DuckDuckGo text search (invoked by backend, not the browser)
 ├── extension/

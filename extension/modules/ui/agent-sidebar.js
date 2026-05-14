@@ -621,7 +621,7 @@ export async function mountSidebar({ onSubmit, onSidebarClose } = {}) {
     try {
       onSidebarClose?.();
     } catch (e) {
-      console.warn('[Guidely] onSidebarClose failed', e);
+      console.warn('[Lumineer] onSidebarClose failed', e);
     }
   }
 
@@ -645,12 +645,12 @@ export async function mountSidebar({ onSubmit, onSidebarClose } = {}) {
     sidebar = document.createElement('div');
     sidebar.id = 'g-sidebar';
     sidebar.setAttribute('role', 'complementary');
-    sidebar.setAttribute('aria-label', 'Guidely agent');
+    sidebar.setAttribute('aria-label', 'Lumineer agent');
     sidebar.innerHTML = `
-      <button type="button" id="g-close" title="Close Guidely" aria-label="Close Guidely">✕</button>
+      <button type="button" id="g-close" title="Close Lumineer" aria-label="Close Lumineer">✕</button>
       <header id="g-header">
         <h2 id="g-title">
-          💡 Guidely
+          💡 Lumineer
           <span id="g-agent-status" role="status"></span>
         </h2>
         <p id="g-tagline">Your internet companion</p>

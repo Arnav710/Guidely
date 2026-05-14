@@ -1,5 +1,5 @@
 /**
- * agent-loop.js — Autonomous browser agent for Guidely.
+ * agent-loop.js — Autonomous browser agent for Lumineer.
  *
  * Responsibilities:
  *   • All browser tool executors (get_sections, search_page, click, type, scroll, navigate…)
@@ -17,9 +17,9 @@
  *
  * Debug: Open DevTools (F12 or Cmd+Opt+I) while the **website tab** is focused
  * (e.g. Gmail) — not the extension popup, not chrome://extensions. In Console,
- * keep default levels on (especially "Verbose" / all levels) and filter by: Guidely
+ * keep default levels on (especially "Verbose" / all levels) and filter by: Lumineer
  *
- * Extra detail: set window.__GUIDELY_DEBUG__ = true then reload for verbose dom_map /
+ * Extra detail: set window.__LUMINEER_DEBUG__ = true then reload for verbose dom_map /
  * selector snippets in guide mode.
  */
 
@@ -31,23 +31,23 @@ import { agentStart, agentStepStream, extendWorkflow, summarizePage, guideMode, 
 const MAX_LOOP_CALLS = 24;
 
 // Attribute injected on semantic landmark elements so we can find them by ID.
-const SECTION_ATTR = 'data-guidely-section';
+const SECTION_ATTR = 'data-lumineer-section';
 
 /**
- * Debug logging — always logs concise milestones. Set window.__GUIDELY_DEBUG__ = true
+ * Debug logging — always logs concise milestones. Set window.__LUMINEER_DEBUG__ = true
  * in the page DevTools console for verbose dumps (e.g. first lines of dom_map).
  */
-function _guidelyLog(tag, data = {}) {
+function _lumineerLog(tag, data = {}) {
   try {
     // Use console.log — many users disable "Info" in DevTools, which hides console.info.
-    console.log(`[Guidely ${tag}]`, data);
+    console.log(`[Lumineer ${tag}]`, data);
   } catch { /* ignore */ }
 }
 
-function _guidelyLogVerbose(tag, data = {}) {
+function _lumineerLogVerbose(tag, data = {}) {
   try {
-    if (typeof window !== 'undefined' && window.__GUIDELY_DEBUG__) {
-      console.log(`[Guidely ${tag}:verbose]`, data);
+    if (typeof window !== 'undefined' && window.__LUMINEER_DEBUG__) {
+      console.log(`[Lumineer ${tag}:verbose]`, data);
     }
   } catch { /* ignore */ }
 }
@@ -95,7 +95,7 @@ function _normaliseTool(tool) {
     if (d < bestDist) { bestDist = d; best = known; }
   }
   if (bestDist <= 3) {
-    console.warn(`[Guidely] Unknown tool "${tool}" → normalised to "${best}" (distance ${bestDist})`);
+    console.warn(`[Lumineer] Unknown tool "${tool}" → normalised to "${best}" (distance ${bestDist})`);
     return best;
   }
   return tool; // Return as-is — will hit the unknown-tool handler
@@ -105,7 +105,7 @@ function _normaliseTool(tool) {
 
 /**
  * Scan the page for semantic landmark elements and return a compact structural
- * overview. Injects data-guidely-section attributes so later get_elements()
+ * overview. Injects data-lumineer-section attributes so later get_elements()
  * calls can locate the same elements without regenerating the full scan.
  */
 export function getPageSections() {
@@ -234,14 +234,14 @@ function _highlightTagRank(tag) {
 
 /**
  * @param {string} query
- * @param {{ excludeGuidelySidebar?: boolean, preferActionTags?: boolean, maxMatches?: number }} [options]
+ * @param {{ excludeLumineerSidebar?: boolean, preferActionTags?: boolean, maxMatches?: number }} [options]
  */
 export function searchPage(query, options = {}) {
   const q = String(query || '').toLowerCase().trim();
   if (!q) return { type: 'search', query, matches: [] };
 
   const {
-    excludeGuidelySidebar = true,
+    excludeLumineerSidebar = true,
     preferActionTags = false,
     maxMatches = 8,
   } = options;
@@ -255,7 +255,7 @@ export function searchPage(query, options = {}) {
   let candidates = [];
   try { candidates = Array.from(document.querySelectorAll(SEARCHABLE)); } catch { /* ignore */ }
 
-  const sidebar = excludeGuidelySidebar ? document.getElementById('g-sidebar') : null;
+  const sidebar = excludeLumineerSidebar ? document.getElementById('g-sidebar') : null;
   const matches = [];
 
   for (const el of candidates) {
@@ -588,11 +588,11 @@ export async function captureScreenshot() {
 /**
  * Auto-capture after any state-changing action.
  * Returns { screenshot, sections } bundled for the next /agent/step request.
- * We hide the Guidely sidebar so it doesn't appear in the screenshot.
+ * We hide the Lumineer sidebar so it doesn't appear in the screenshot.
  */
 async function _autoCapture() {
   const sidebarEl = document.getElementById('g-sidebar');
-  const floatBtn = document.getElementById('guidely-btn');
+  const floatBtn = document.getElementById('lumineer-btn');
   const prevSidebar = sidebarEl?.style.visibility ?? '';
   const prevBtn = floatBtn?.style.visibility ?? '';
 
@@ -707,7 +707,7 @@ export async function runSummarize(conversationId, userQuestion, callbacks = {})
     .replace(/[\uD800-\uDFFF]/g, '')
     .slice(0, 8000);
 
-  _guidelyLog('summarize', {
+  _lumineerLog('summarize', {
     conversationId,
     pageTextChars: pageText.length,
     screenshotB64Chars: (screenshot || '').length,
@@ -724,13 +724,13 @@ export async function runSummarize(conversationId, userQuestion, callbacks = {})
       userQuestion: isQuestion ? userQuestion : null,
     });
     const summary = result?.summary || 'I couldn\'t read this page clearly. Please try again.';
-    _guidelyLog('summarize:ok', {
+    _lumineerLog('summarize:ok', {
       summaryChars: summary.length,
       model: result?.model_used ?? null,
     });
     onMessage?.({ role: 'assistant', content: summary });
   } catch (err) {
-    _guidelyLog('summarize:error', { message: err?.message || String(err) });
+    _lumineerLog('summarize:error', { message: err?.message || String(err) });
     onError?.(`Couldn't summarize: ${err.message}`);
     await store.setAgentStatus(conversationId, 'error');
     onStatusChange?.('error');
@@ -764,7 +764,7 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
   const { screenshot, sections } = await _autoCapture();
 
   // Build a flat element list from every section.
-  // Exclude Guidely's own sidebar elements (they live inside #g-sidebar).
+  // Exclude Lumineer's own sidebar elements (they live inside #g-sidebar).
   const sidebarEl = document.getElementById('g-sidebar');
   // selectorMap: index (1-based) → full original selector, used for highlighting.
   const selectorMap = {};
@@ -772,7 +772,7 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
   for (const sec of (sections?.sections || [])) {
     const secElements = getElementsInSection(sec.id);
     for (const el of (secElements?.elements || [])) {
-      // Skip elements that belong to Guidely's own UI.
+      // Skip elements that belong to Lumineer's own UI.
       try {
         const node = document.querySelector(el.selector);
         if (node && sidebarEl && sidebarEl.contains(node)) continue;
@@ -801,7 +801,7 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
       ).join('\n')
     : '(no interactive elements found)';
 
-  _guidelyLog('guide:prepare', {
+  _lumineerLog('guide:prepare', {
     conversationId,
     sectionCount: (sections?.sections || []).length,
     candidateElements: allElements.length,
@@ -809,7 +809,7 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
     screenshotB64Chars: (screenshot || '').length,
     questionPreview: String(userQuestion || '').slice(0, 120),
   });
-  _guidelyLogVerbose('guide:dom_map', {
+  _lumineerLogVerbose('guide:dom_map', {
     head: domMap.slice(0, 1200),
   });
 
@@ -839,7 +839,7 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
       resolveSource = 'model_selector';
     }
 
-    _guidelyLog('guide:response', {
+    _lumineerLog('guide:response', {
       item_number: result?.item_number ?? null,
       label: result?.label ? String(result.label).slice(0, 80) : null,
       modelSelectorChars: result?.selector ? String(result.selector).length : 0,
@@ -847,7 +847,7 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
       resolveSource,
       mapHasItem: !!(result?.item_number && selectorMap[result.item_number]),
     });
-    _guidelyLogVerbose('guide:selectors', {
+    _lumineerLogVerbose('guide:selectors', {
       modelSelector: result?.selector || null,
       resolvedHead: resolvedSelector ? resolvedSelector.slice(0, 200) : null,
     });
@@ -856,14 +856,14 @@ export async function runGuideMode(conversationId, userQuestion, highlightFn, ca
       // Longer pulse for guide mode so users can find the control (onDone no longer clears it).
       highlightFn(resolvedSelector, result?.label || null, { durationMs: 90000 });
     } else {
-      _guidelyLog('guide:highlight_skipped', {
+      _lumineerLog('guide:highlight_skipped', {
         hasHighlightFn: !!highlightFn,
         hasResolved: !!resolvedSelector,
         hasLabel: !!result?.label,
       });
     }
   } catch (err) {
-    _guidelyLog('guide:error', { message: err?.message || String(err) });
+    _lumineerLog('guide:error', { message: err?.message || String(err) });
     onError?.(`Couldn't identify element: ${err.message}`);
     await store.setAgentStatus(conversationId, 'error');
     onStatusChange?.('error');
@@ -968,7 +968,7 @@ async function _runOneVigilanceScan(conversationId, callbacks = {}) {
       selectorMap,
     });
   } catch (err) {
-    _guidelyLog('vigilance:error', { message: err?.message || String(err) });
+    _lumineerLog('vigilance:error', { message: err?.message || String(err) });
     onError?.(`Vigilance check failed: ${err.message}`);
   }
 }
@@ -1285,7 +1285,7 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
       // Normalise tool name — catches near-miss hallucinations before dispatch.
       const tool = _normaliseTool(rawTool || 'ask_user');
       console.log(
-        '[Guidely] tool received',
+        '[Lumineer] tool received',
         { rawTool, normalised: tool, params, display, callCount },
       );
 
@@ -1593,7 +1593,7 @@ async function _runLoop(conversationId, callbacks = {}, initial = {}) {
       // Unknown tool — log loudly and surface a clear message to the user.
       {
         console.error(
-          '[Guidely] UNKNOWN_TOOL — this should not happen. Check backend logs.',
+          '[Lumineer] UNKNOWN_TOOL — this should not happen. Check backend logs.',
           { rawTool, normalisedTool: tool, params, display, response, callCount },
         );
         markToolDone();

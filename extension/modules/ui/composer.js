@@ -26,12 +26,12 @@ export function mountComposer(rootEl, { onSend } = {}) {
         rows="3"
         maxlength="2000"
         placeholder="What do you need help with? (e.g. renew my license, explain what I'm seeing on my screen…)"
-        aria-label="Message to Guidely"
+        aria-label="Message to Lumineer"
       ></textarea>
       ${hasSpeech ? '<button type="button" id="g-mic" aria-label="Speak" title="Hold to speak">🎤</button>' : ''}
       <button type="button" id="g-send" aria-label="Send">Send</button>
     </div>
-    <div class="g-mode-btns" id="g-mode-btns" role="group" aria-label="Choose how Guidely should help">
+    <div class="g-mode-btns" id="g-mode-btns" role="group" aria-label="Choose how Lumineer should help">
       <button type="button" class="g-mode-btn" data-mode="summarize" title="Ask a question about what's on screen, or leave blank to get a summary">
         <span class="g-mode-icon">🔍</span>Ask
       </button>

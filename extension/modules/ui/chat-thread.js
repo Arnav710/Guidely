@@ -231,7 +231,7 @@ function _makeEmptyState(rootEl) {
   wrap.className = 'g-empty-state';
   wrap.innerHTML = `
     <div class="g-empty-icon">👋</div>
-    <p class="g-empty-greeting">Hi! I'm Guidely.</p>
+    <p class="g-empty-greeting">Hi! I'm Lumineer.</p>
     <p class="g-empty-sub">I can help you navigate websites,<br>understand what you're looking at,<br>and get things done online.</p>
     <div class="g-empty-chips">
       ${EXAMPLE_PROMPTS.map((p) => `<button class="g-empty-chip" type="button">${p.emoji} ${esc(p.text)}</button>`).join('')}

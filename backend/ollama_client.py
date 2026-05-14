@@ -761,7 +761,7 @@ async def call_ollama_text(
     return body.get("response") or ""
 
 
-async def analyze_guidely(
+async def analyze_lumineer(
     elements: list[DomElement],
     history: list[HistoryEntry],
     screenshot_b64: Optional[str] = None,

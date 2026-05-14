@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Guidely",
+  "name": "Lumineer",
   "version": "2.0.0",
-  "description": "AI browser co-pilot for seniors — powered by local Gemma via Ollama",
+  "description": "Lighting the safe way forward — AI browser co-pilot for seniors, powered by local Gemma via Ollama",
   "permissions": [
     "activeTab",
     "tabs",

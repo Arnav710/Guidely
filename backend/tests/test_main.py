@@ -29,7 +29,7 @@ async def test_analyze_returns_instruction_and_selector():
         "selector": "button.next-step",
         "_model": "gemma4:e2b",
     }
-    with patch("main.analyze_guidely", new_callable=AsyncMock, return_value=mock_result):
+    with patch("main.analyze_lumineer", new_callable=AsyncMock, return_value=mock_result):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/analyze", json={
                 "screenshot": FAKE_SCREENSHOT_B64,
@@ -55,7 +55,7 @@ async def test_analyze_passes_question_to_ollama():
         "_model": "gemma4:e2b",
     }
     mock_ollama = AsyncMock(return_value=mock_result)
-    with patch("main.analyze_guidely", mock_ollama):
+    with patch("main.analyze_lumineer", mock_ollama):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/analyze", json={
                 "screenshot": FAKE_SCREENSHOT_B64,
@@ -80,7 +80,7 @@ async def test_analyze_trace_query_passes_through():
         "_model": "gemma4:e2b",
         "_trace": {"model": "gemma4:e2b", "ollama_elapsed_ms": 12.3},
     }
-    with patch("main.analyze_guidely", new_callable=AsyncMock, return_value=mock_result):
+    with patch("main.analyze_lumineer", new_callable=AsyncMock, return_value=mock_result):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/analyze?trace=1",
@@ -117,7 +117,7 @@ async def test_analyze_accepts_dom_only_without_screenshot():
         "needs_screenshot": False,
         "_model": "gemma4:e2b",
     }
-    with patch("main.analyze_guidely", new_callable=AsyncMock, return_value=mock_result):
+    with patch("main.analyze_lumineer", new_callable=AsyncMock, return_value=mock_result):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/analyze", json={
                 "dom_map": [
@@ -136,7 +136,7 @@ async def test_analyze_accepts_dom_only_without_screenshot():
 @pytest.mark.asyncio
 async def test_analyze_returns_503_when_ollama_unavailable():
     from ollama_client import OllamaUnavailableError
-    with patch("main.analyze_guidely", new_callable=AsyncMock, side_effect=OllamaUnavailableError("not running")):
+    with patch("main.analyze_lumineer", new_callable=AsyncMock, side_effect=OllamaUnavailableError("not running")):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/analyze", json={
                 "screenshot": FAKE_SCREENSHOT_B64,

@@ -1,7 +1,7 @@
 // Schema for persistent conversation storage (chrome.storage.local).
 // Version bumps trigger migrate() — add new fields with defaults there.
 export const SCHEMA_VERSION = 2;
-export const STORE_KEY = 'guidely.v1';
+export const STORE_KEY = 'lumineer.v1';
 
 /** @returns {import('./conversation-store.js').Store} */
 export function emptyStore() {

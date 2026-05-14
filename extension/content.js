@@ -1,6 +1,6 @@
-// ── Guidely content script ────────────────────────────────────────────────────
+// ── Lumineer content script ────────────────────────────────────────────────────
 //
-// Thin orchestrator: owns the floating button, the Guidely UI mount, and the
+// Thin orchestrator: owns the floating button, the Lumineer UI mount, and the
 // connection between user events and the agent loop.
 //
 // Heavy lifting lives in:
@@ -11,7 +11,7 @@
 // ── Floating button styles ────────────────────────────────────────────────────
 
 const BTN_STYLES = `
-  #guidely-btn {
+  #lumineer-btn {
     position: fixed;
     bottom: 24px;
     right: 24px;
@@ -29,17 +29,17 @@ const BTN_STYLES = `
     transition: background 0.2s, transform 0.1s;
     user-select: none;
   }
-  #guidely-btn:hover { background: #e05a28; transform: scale(1.04); }
-  #guidely-btn:disabled { background: #aaa; cursor: not-allowed; transform: none; }
-  #g-sidebar.g-open ~ #guidely-btn {
+  #lumineer-btn:hover { background: #e05a28; transform: scale(1.04); }
+  #lumineer-btn:disabled { background: #aaa; cursor: not-allowed; transform: none; }
+  #g-sidebar.g-open ~ #lumineer-btn {
     display: none !important;
   }
-  #guidely-btn.guidely-btn--vigilance-stop {
+  #lumineer-btn.lumineer-btn--vigilance-stop {
     display: none !important;
   }
 
   /* Vigilance mode — single summary popup fixed bottom-right. */
-  .guidely-vigil-popup-wrap {
+  .lumineer-vigil-popup-wrap {
     position: fixed;
     z-index: 2147483645;
     bottom: 16px;
@@ -58,28 +58,28 @@ const BTN_STYLES = `
     padding: 12px 12px 10px;
     box-shadow: 0 6px 24px rgba(0,0,0,0.22);
   }
-  .guidely-vigil-popup-wrap .g-vigil-header {
+  .lumineer-vigil-popup-wrap .g-vigil-header {
     display: flex;
     align-items: center;
     gap: 6px;
     margin-bottom: 8px;
   }
-  .guidely-vigil-popup-wrap .g-vigil-title {
+  .lumineer-vigil-popup-wrap .g-vigil-title {
     font-size: 13px;
     font-weight: 700;
     color: #991b1b;
     flex: 1;
   }
-  .guidely-vigil-popup-wrap .g-vigil-flag {
+  .lumineer-vigil-popup-wrap .g-vigil-flag {
     margin-bottom: 8px;
     padding-bottom: 8px;
     border-bottom: 1px solid #fecaca;
   }
-  .guidely-vigil-popup-wrap .g-vigil-flag:last-of-type {
+  .lumineer-vigil-popup-wrap .g-vigil-flag:last-of-type {
     border-bottom: none;
     margin-bottom: 6px;
   }
-  .guidely-vigil-popup-wrap .g-vigil-reason {
+  .lumineer-vigil-popup-wrap .g-vigil-reason {
     display: block;
     font-size: 11px;
     font-weight: 700;
@@ -88,12 +88,12 @@ const BTN_STYLES = `
     color: #b91c1c;
     margin-bottom: 2px;
   }
-  .guidely-vigil-popup-wrap .g-vigil-explanation {
+  .lumineer-vigil-popup-wrap .g-vigil-explanation {
     margin: 0;
     color: #374151;
     font-size: 12.5px;
   }
-  .guidely-vigil-popup-wrap button {
+  .lumineer-vigil-popup-wrap button {
     font: inherit;
     font-size: 12px;
     font-weight: 600;
@@ -106,10 +106,10 @@ const BTN_STYLES = `
     width: 100%;
     margin-top: 4px;
   }
-  .guidely-vigil-popup-wrap button:hover { background: #fef2f2; }
+  .lumineer-vigil-popup-wrap button:hover { background: #fef2f2; }
 
   /* Static rectangular ring: no pulse (pulse + outline looked broken on rounded links). */
-  .guidely-ring {
+  .lumineer-ring {
     outline: 2px solid #FF6B35 !important;
     outline-offset: 2px !important;
     scroll-margin: 80px;
@@ -117,9 +117,9 @@ const BTN_STYLES = `
 `;
 
 function injectBtnStyles() {
-  if (document.getElementById('guidely-btn-styles')) return;
+  if (document.getElementById('lumineer-btn-styles')) return;
   const style = document.createElement('style');
-  style.id = 'guidely-btn-styles';
+  style.id = 'lumineer-btn-styles';
   style.textContent = BTN_STYLES;
   document.head.appendChild(style);
 }
@@ -154,7 +154,7 @@ function _stopSpeech() {
 
 function clearHighlight() {
   if (_highlightTarget) {
-    _highlightTarget.classList.remove('guidely-ring');
+    _highlightTarget.classList.remove('lumineer-ring');
     _highlightTarget = null;
   }
   if (_highlightTimer) { clearTimeout(_highlightTimer); _highlightTimer = null; }
@@ -197,7 +197,7 @@ function _querySelectorWithIdFallback(selector) {
     const el = document.querySelector(selector);
     if (el) return el;
   } catch (e) {
-    console.log('[Guidely highlight] querySelector threw', e?.message || e);
+    console.log('[Lumineer highlight] querySelector threw', e?.message || e);
   }
   if (!selector.includes('#')) return null;
   const idRe = /#[A-Za-z_][\w-]*/g;
@@ -215,7 +215,7 @@ function _querySelectorWithIdFallback(selector) {
 function highlightElement(selector, label, opts = {}) {
   clearHighlight();
   if (!selector && !label) {
-    console.log('[Guidely highlight] skipped — no selector or label');
+    console.log('[Lumineer highlight] skipped — no selector or label');
     return;
   }
 
@@ -232,7 +232,7 @@ function highlightElement(selector, label, opts = {}) {
     }
     if (!el) el = _querySelectorWithIdFallback(selector);
     if (!el && selector) {
-      console.warn('[Guidely highlight] querySelector returned null', {
+      console.warn('[Lumineer highlight] querySelector returned null', {
         selectorLen: selector.length,
         selectorHead: selector.slice(0, 100),
         parseError: selectorError,
@@ -241,11 +241,11 @@ function highlightElement(selector, label, opts = {}) {
   }
   if (!el && label && _agentLoop) {
     const results = _agentLoop.searchPage(label, {
-      excludeGuidelySidebar: true,
+      excludeLumineerSidebar: true,
       preferActionTags: true,
       maxMatches: 16,
     });
-    console.log('[Guidely highlight] label fallback', {
+    console.log('[Lumineer highlight] label fallback', {
       label: String(label).slice(0, 80),
       matchCount: results.matches?.length ?? 0,
       topTags: results.matches?.slice(0, 4).map((x) => x.tag),
@@ -258,19 +258,19 @@ function highlightElement(selector, label, opts = {}) {
         candidate = _refineHighlightNode(candidate, label);
         if (!_roughVisible(candidate)) continue;
         el = candidate;
-        console.log('[Guidely highlight] fallback picked match', { index: i, tag: el.tagName });
+        console.log('[Lumineer highlight] fallback picked match', { index: i, tag: el.tagName });
         break;
       } catch { /* ignore */ }
     }
   }
   if (!el) {
-    console.warn('[Guidely highlight] no element found — ring not shown');
+    console.warn('[Lumineer highlight] no element found — ring not shown');
     return;
   }
 
-  console.log('[Guidely highlight] ok', { tag: el.tagName, id: el.id || null });
+  console.log('[Lumineer highlight] ok', { tag: el.tagName, id: el.id || null });
   _highlightTarget = el;
-  el.classList.add('guidely-ring');
+  el.classList.add('lumineer-ring');
   try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch { /* ignore */ }
   _highlightTimer = setTimeout(clearHighlight, durationMs);
 }
@@ -294,7 +294,7 @@ const _vigilanceMarked = [];
 function clearVigilanceOverlays() {
   while (_vigilanceMarked.length) {
     const row = _vigilanceMarked.pop();
-    try { row.el?.classList?.remove('guidely-vigilance-risk'); } catch { /* ignore */ }
+    try { row.el?.classList?.remove('lumineer-vigilance-risk'); } catch { /* ignore */ }
     try { row.wrap?.remove(); } catch { /* ignore */ }
   }
 }
@@ -310,11 +310,11 @@ function applyVigilanceFlags(payload) {
   if (flags.length === 0) return;
 
   const wrap = document.createElement('div');
-  wrap.className = 'guidely-vigil-popup-wrap';
+  wrap.className = 'lumineer-vigil-popup-wrap';
 
   const header = document.createElement('div');
   header.className = 'g-vigil-header';
-  header.innerHTML = `<span style="font-size:18px">⚠️</span><span class="g-vigil-title">Guidely spotted ${flags.length} warning${flags.length > 1 ? 's' : ''}</span>`;
+  header.innerHTML = `<span style="font-size:18px">⚠️</span><span class="g-vigil-title">Lumineer spotted ${flags.length} warning${flags.length > 1 ? 's' : ''}</span>`;
   wrap.appendChild(header);
 
   for (const f of flags) {
@@ -338,7 +338,7 @@ function applyVigilanceFlags(payload) {
   wrap.appendChild(btn);
 
   document.body.appendChild(wrap);
-  // If the Guidely sidebar is open, shift the popup left so it's not hidden behind it.
+  // If the Lumineer sidebar is open, shift the popup left so it's not hidden behind it.
   const sidebarOpen = !!document.querySelector('#g-sidebar.g-open');
   if (sidebarOpen) wrap.style.right = '420px';
   _vigilanceMarked.push({ el: null, wrap });
@@ -533,13 +533,13 @@ function _makeCallbacks(conversationId) {
 // ── Floating button ───────────────────────────────────────────────────────────
 
 function getOrCreateButton() {
-  let btn = document.getElementById('guidely-btn');
+  let btn = document.getElementById('lumineer-btn');
   if (btn) return btn;
   btn = document.createElement('button');
-  btn.id = 'guidely-btn';
+  btn.id = 'lumineer-btn';
   btn.type = 'button';
-  btn.textContent = '💡 Help me';
-  btn.setAttribute('aria-label', 'Open Guidely');
+  btn.textContent = '💡 Assist me';
+  btn.setAttribute('aria-label', 'Open Lumineer');
   document.body.appendChild(btn);
   return btn;
 }
@@ -556,10 +556,10 @@ async function init() {
   try {
     await loadModules();
   } catch (err) {
-    console.warn('[Guidely] module load failed:', err);
+    console.warn('[Lumineer] module load failed:', err);
     const btn = getOrCreateButton();
     btn.addEventListener('click', () =>
-      alert("Guidely can't load on this page. Please try a normal website."),
+      alert("Lumineer can't load on this page. Please try a normal website."),
     );
     return;
   }
@@ -595,7 +595,7 @@ async function init() {
   // One visible line so you know logging works — content-script logs only appear
   // in this page's Console when that tab's DevTools is open (not extension popup).
   console.log(
-    '%cGuidely%c · Debug logs are prefixed %c[Guidely …]%c — filter the Console by "Guidely". '
+    '%cLumineer%c · Debug logs are prefixed %c[Lumineer …]%c — filter the Console by "Lumineer". '
     + 'Keep DevTools open on this tab (the site), not on chrome://extensions.',
     'color:#fff;background:#FF6B35;font-weight:bold;padding:2px 8px;border-radius:4px',
     'color:inherit',

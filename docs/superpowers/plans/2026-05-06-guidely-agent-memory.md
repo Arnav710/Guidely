@@ -1,8 +1,8 @@
-# Guidely Implementation Plan — Persistent Agent Memory + Workflow Mode (P1 + P2)
+# Lumineer Implementation Plan — Persistent Agent Memory + Workflow Mode (P1 + P2)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Upgrade Guidely's right-side panel from a per-page chat into a **persistent, Cursor-IDE-style agent sidebar** that retains every conversation across page reloads, navigations, and browser restarts, and that can drive a user end-to-end through a multi-page workflow (the canonical example: "renew my driver's license"). The conversation only ends when the user explicitly clears or archives it.
+**Goal:** Upgrade Lumineer's right-side panel from a per-page chat into a **persistent, Cursor-IDE-style agent sidebar** that retains every conversation across page reloads, navigations, and browser restarts, and that can drive a user end-to-end through a multi-page workflow (the canonical example: "renew my driver's license"). The conversation only ends when the user explicitly clears or archives it.
 
 This plan implements **Phase P1 (persistent memory)** and a usable slice of **Phase P2 (workflow mode)** from the architecture doc. Vigilance, voice, explainer, and document/camera modules are separate plans.
 
@@ -65,7 +65,7 @@ Create `extension/modules/conversation-schema.js`:
 ```javascript
 // Schema versioning lets us evolve the store without breaking existing users.
 export const SCHEMA_VERSION = 1;
-export const STORE_KEY = 'guidely.v1';
+export const STORE_KEY = 'lumineer.v1';
 
 /**
  * @typedef {Object} Message
@@ -166,7 +166,7 @@ export function migrate(raw) {
 - [ ] **Step 3: Reload the extension and verify `chrome.storage` permission was granted**
 
 ```
-1. chrome://extensions → click reload on Guidely
+1. chrome://extensions → click reload on Lumineer
 2. Open the toolbar popup → DevTools → console:
      chrome.storage.local.get(null, console.log)
    Expected: {} (no error about missing permission).
@@ -427,7 +427,7 @@ export function renderThread(rootEl, messages, opts = {}) {
   rootEl.innerHTML = '';
   for (const m of messages) {
     const div = document.createElement('div');
-    div.className = `guidely-msg guidely-msg-${m.role}`;
+    div.className = `lumineer-msg lumineer-msg-${m.role}`;
     div.textContent = m.content;
     rootEl.appendChild(div);
   }
@@ -440,25 +440,25 @@ export function renderThread(rootEl, messages, opts = {}) {
 ```javascript
 export function mountComposer(rootEl, { onSend, onAutonomyChange, autonomyLevel }) {
   rootEl.innerHTML = `
-    <div class="guidely-composer">
-      <div class="guidely-mode-row">
-        <label><input type="radio" name="guidely-mode" value="0"> Explain</label>
-        <label><input type="radio" name="guidely-mode" value="1"> Highlight</label>
-        <label><input type="radio" name="guidely-mode" value="2"> Fill+Ask</label>
-        <label><input type="radio" name="guidely-mode" value="3"> Auto+Confirm</label>
+    <div class="lumineer-composer">
+      <div class="lumineer-mode-row">
+        <label><input type="radio" name="lumineer-mode" value="0"> Explain</label>
+        <label><input type="radio" name="lumineer-mode" value="1"> Highlight</label>
+        <label><input type="radio" name="lumineer-mode" value="2"> Fill+Ask</label>
+        <label><input type="radio" name="lumineer-mode" value="3"> Auto+Confirm</label>
       </div>
-      <textarea id="guidely-question" rows="3" maxlength="2000"
-        placeholder="Message Guidely… (Enter to send, Shift+Enter for new line)"
-        aria-label="Message to Guidely"></textarea>
-      <div class="guidely-send-row">
-        <span class="guidely-send-hint">Enter send · Shift+Enter newline</span>
-        <button type="button" id="guidely-send">Send</button>
+      <textarea id="lumineer-question" rows="3" maxlength="2000"
+        placeholder="Message Lumineer… (Enter to send, Shift+Enter for new line)"
+        aria-label="Message to Lumineer"></textarea>
+      <div class="lumineer-send-row">
+        <span class="lumineer-send-hint">Enter send · Shift+Enter newline</span>
+        <button type="button" id="lumineer-send">Send</button>
       </div>
     </div>
   `;
-  const ta = rootEl.querySelector('#guidely-question');
-  const send = rootEl.querySelector('#guidely-send');
-  const radios = rootEl.querySelectorAll('input[name="guidely-mode"]');
+  const ta = rootEl.querySelector('#lumineer-question');
+  const send = rootEl.querySelector('#lumineer-send');
+  const radios = rootEl.querySelectorAll('input[name="lumineer-mode"]');
   for (const r of radios) {
     if (Number(r.value) === autonomyLevel) r.checked = true;
     r.addEventListener('change', () => onAutonomyChange?.(Number(r.value)));
@@ -485,23 +485,23 @@ export function mountComposer(rootEl, { onSend, onAutonomyChange, autonomyLevel 
 ```javascript
 export function renderConversationList(rootEl, conversations, { activeId, onSelect, onNew }) {
   rootEl.innerHTML = `
-    <div class="guidely-conv-header">
+    <div class="lumineer-conv-header">
       <span>Conversations</span>
-      <button type="button" id="guidely-new-conv" title="New conversation">＋</button>
+      <button type="button" id="lumineer-new-conv" title="New conversation">＋</button>
     </div>
-    <ul class="guidely-conv-list" role="list"></ul>
+    <ul class="lumineer-conv-list" role="list"></ul>
   `;
-  rootEl.querySelector('#guidely-new-conv').addEventListener('click', () => onNew?.());
-  const ul = rootEl.querySelector('.guidely-conv-list');
+  rootEl.querySelector('#lumineer-new-conv').addEventListener('click', () => onNew?.());
+  const ul = rootEl.querySelector('.lumineer-conv-list');
   for (const c of conversations) {
     const li = document.createElement('li');
-    li.className = 'guidely-conv-item' + (c.id === activeId ? ' active' : '');
+    li.className = 'lumineer-conv-item' + (c.id === activeId ? ' active' : '');
     const stepsDone = c.workflow ? c.workflow.steps.filter((s) => s.status === 'done').length : 0;
     const stepsTotal = c.workflow ? c.workflow.steps.length : 0;
     const stepBadge = c.workflow ? ` · ${stepsDone}/${stepsTotal}` : '';
     li.innerHTML = `
-      <span class="guidely-conv-title">${escapeHtml(c.title)}</span>
-      <span class="guidely-conv-meta">${c.status === 'archived' ? 'archived' : ''}${stepBadge}</span>
+      <span class="lumineer-conv-title">${escapeHtml(c.title)}</span>
+      <span class="lumineer-conv-meta">${c.status === 'archived' ? 'archived' : ''}${stepBadge}</span>
     `;
     li.addEventListener('click', () => onSelect?.(c.id));
     ul.appendChild(li);
@@ -524,23 +524,23 @@ import { renderThread } from './chat-thread.js';
 import { mountComposer } from './composer.js';
 
 export async function mountSidebar({ onSubmit }) {
-  if (document.getElementById('guidely-sidebar')) return;
+  if (document.getElementById('lumineer-sidebar')) return;
   const sidebar = document.createElement('div');
-  sidebar.id = 'guidely-sidebar';
+  sidebar.id = 'lumineer-sidebar';
   sidebar.setAttribute('role', 'complementary');
-  sidebar.setAttribute('aria-label', 'Guidely agent');
+  sidebar.setAttribute('aria-label', 'Lumineer agent');
   sidebar.innerHTML = `
-    <button type="button" id="guidely-close" title="Close">✕</button>
-    <header id="guidely-sidebar-header">
-      <h1>💡 Guidely</h1>
+    <button type="button" id="lumineer-close" title="Close">✕</button>
+    <header id="lumineer-sidebar-header">
+      <h1>💡 Lumineer</h1>
     </header>
-    <section id="guidely-conv-pane"></section>
-    <section id="guidely-plan-pane"></section>
-    <section id="guidely-thread-pane" aria-live="polite"></section>
-    <footer id="guidely-composer-pane"></footer>
+    <section id="lumineer-conv-pane"></section>
+    <section id="lumineer-plan-pane"></section>
+    <section id="lumineer-thread-pane" aria-live="polite"></section>
+    <footer id="lumineer-composer-pane"></footer>
   `;
   document.body.appendChild(sidebar);
-  sidebar.querySelector('#guidely-close').addEventListener('click', () =>
+  sidebar.querySelector('#lumineer-close').addEventListener('click', () =>
     sidebar.classList.remove('open')
   );
 
@@ -549,7 +549,7 @@ export async function mountSidebar({ onSubmit }) {
   let active = await store.getActive();
   if (!active) active = await store.createConversation();
 
-  const composerCtl = mountComposer(sidebar.querySelector('#guidely-composer-pane'), {
+  const composerCtl = mountComposer(sidebar.querySelector('#lumineer-composer-pane'), {
     autonomyLevel: (await store.getSettings()).autonomyLevel,
     onAutonomyChange: (level) => store.updateSettings({ autonomyLevel: level }),
     onSend: async (text) => {
@@ -564,7 +564,7 @@ export async function mountSidebar({ onSubmit }) {
 
   async function rerender() {
     const list = await store.listConversations({ includeArchived: true });
-    renderConversationList(sidebar.querySelector('#guidely-conv-pane'), list, {
+    renderConversationList(sidebar.querySelector('#lumineer-conv-pane'), list, {
       activeId: active?.id,
       onSelect: async (id) => {
         await store.setActive(id);
@@ -576,7 +576,7 @@ export async function mountSidebar({ onSubmit }) {
         rerender();
       },
     });
-    renderThread(sidebar.querySelector('#guidely-thread-pane'), active?.messages || []);
+    renderThread(sidebar.querySelector('#lumineer-thread-pane'), active?.messages || []);
     // plan-view.js will be wired in Task 6.
   }
 
@@ -611,7 +611,7 @@ The existing `content.js` becomes a thin entry point. Its DOM serializer, highli
 
 - [ ] **Step 1: Move existing chat-state references behind the new store**
 
-In `submitGuidelyMessage`, replace the in-memory `guidely_history` with `store.appendMessage(conversationId, {...})` for both user and assistant turns. Replace welcome message with the first message of a freshly created conversation.
+In `submitLumineerMessage`, replace the in-memory `lumineer_history` with `store.appendMessage(conversationId, {...})` for both user and assistant turns. Replace welcome message with the first message of a freshly created conversation.
 
 - [ ] **Step 2: Add a new entry-point `init()` that mounts the sidebar**
 
@@ -824,7 +824,7 @@ git commit -m "feat(backend): conversation_id + workflow on /analyze; thin exten
 In `backend/prompt/workflow.py`:
 
 ```python
-PLAN_SYSTEM_PROMPT = """You are Guidely's workflow planner. Given a senior user's goal
+PLAN_SYSTEM_PROMPT = """You are Lumineer's workflow planner. Given a senior user's goal
 and a snippet of the current webpage, produce a 3-8 step plan that will accomplish
 the goal end-to-end. Each step is one short imperative sentence describing a
 single user-facing action ("Sign in", "Open the renewal form", "Pay the fee").
@@ -882,7 +882,7 @@ async def plan(req: WorkflowPlanRequest):
     try:
         return await generate_plan(req)
     except OllamaUnavailableError:
-        raise HTTPException(503, "Guidely is offline. Please make sure Ollama is running.")
+        raise HTTPException(503, "Lumineer is offline. Please make sure Ollama is running.")
 ```
 
 Wire this router in `backend/main.py`:
@@ -907,7 +907,7 @@ export function renderPlan(rootEl, workflow) {
     </li>`;
   }).join('');
   rootEl.innerHTML = `
-    <div class="guidely-plan">
+    <div class="lumineer-plan">
       <h3>Plan: ${escapeHtml(workflow.goal)}</h3>
       <ol class="steps">${itemsHtml}</ol>
     </div>
@@ -921,7 +921,7 @@ function escapeHtml(s) {
 }
 ```
 
-Then call `renderPlan(sidebar.querySelector('#guidely-plan-pane'), active.workflow)` in `agent-sidebar.js`'s `rerender`.
+Then call `renderPlan(sidebar.querySelector('#lumineer-plan-pane'), active.workflow)` in `agent-sidebar.js`'s `rerender`.
 
 - [ ] **Step 5: Trigger plan generation on goal-style messages**
 

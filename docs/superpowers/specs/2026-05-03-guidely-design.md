@@ -1,4 +1,4 @@
-# Guidely — Design Spec
+# Lumineer — Design Spec
 
 **Date:** 2026-05-03 (revised 2026-05-06)  
 **Hackathon:** Kaggle × Google DeepMind — Gemma 4 Good Hackathon  
@@ -21,11 +21,11 @@ The next layer of the problem: confusing real-world artifacts (credit-card state
 
 ## 2. Solution
 
-**Guidely** (codename **CareScout**) is a local-first AI browser co-pilot for seniors delivered as a Chrome extension.
+**Lumineer** (codename **CareScout**) is a local-first AI browser co-pilot for seniors delivered as a Chrome extension.
 
 The user clicks a floating "Help me" button on any webpage and is greeted by a **persistent conversational sidebar** — a chat thread that behaves like the Cursor IDE agent panel. The thread survives page reloads, tab navigation, and browser restarts; it is only cleared when the user explicitly clears it. Every message captures the current page (DOM map + screenshot) so the same conversation can guide the user across many pages of a single real-world workflow ("renew my license", "appeal a denied claim", "set up Medicare Part D").
 
-Guidely speaks plain English, optionally aloud. It highlights the next button or field directly on the page. It can read documents through the user's webcam (a prescription bottle, a bill, an insurance card). It watches passively for scam patterns (urgent payment language, lookalike domains, gift-card / wire-transfer asks) and warns the user *before* they click. The user chooses how active they want it: explain only, highlight only, or fill-and-confirm.
+Lumineer speaks plain English, optionally aloud. It highlights the next button or field directly on the page. It can read documents through the user's webcam (a prescription bottle, a bill, an insurance card). It watches passively for scam patterns (urgent payment language, lookalike domains, gift-card / wire-transfer asks) and warns the user *before* they click. The user chooses how active they want it: explain only, highlight only, or fill-and-confirm.
 
 Everything runs on-device via Ollama + Gemma 4. No screenshots, no documents, and no chat history ever leave the user's machine.
 
@@ -35,7 +35,7 @@ Everything runs on-device via Ollama + Gemma 4. No screenshots, no documents, an
 
 ## 3. Hackathon Fit
 
-| Judging Criterion | How Guidely Addresses It |
+| Judging Criterion | How Lumineer Addresses It |
 |---|---|
 | **Impact (30%)** | Targets 1B+ elderly internet users globally; solves a universal, high-stakes pain point (forms, logins, payments, healthcare bookings) |
 | **Technical Execution (30%)** | Gemma 4 multimodal reasoning over screenshot + DOM map; CSS selector-based pixel-perfect element targeting; structured JSON output; local-first architecture |
@@ -122,7 +122,7 @@ The extension is **the source of truth** for chat history. The backend stays sta
 - Clears the highlight on the next "Help me" click
 
 **`popup.html`**
-- Minimal: Guidely logo, status indicator (backend reachable / offline), version number
+- Minimal: Lumineer logo, status indicator (backend reachable / offline), version number
 
 ### 4.3 FastAPI Backend
 
@@ -197,7 +197,7 @@ Elements with no discernible label and no ID are skipped. The map is capped at 3
 ### 5.2 System Prompt
 
 ```
-You are Guidely, a patient and friendly assistant helping elderly people use the internet.
+You are Lumineer, a patient and friendly assistant helping elderly people use the internet.
 You are given:
   1. A screenshot of the webpage the user is currently viewing
   2. A list of interactive elements currently on the page (their labels and CSS selectors)
@@ -258,11 +258,11 @@ For follow-up turns, prior assistant instructions are prepended as conversation 
 
 | Failure Scenario | Behavior |
 |---|---|
-| Ollama not running | Backend returns `503`; extension shows "Guidely is offline. Please make sure Ollama is running." |
+| Ollama not running | Backend returns `503`; extension shows "Lumineer is offline. Please make sure Ollama is running." |
 | Gemma returns malformed JSON | Backend retries once with a stricter prompt ("You must respond with ONLY the JSON object, nothing else."); on second failure returns `{ instruction: <raw text>, element_label: null, selector: null }` — sidebar shows instruction only, no highlight |
 | Gemma returns a selector not in the dom_map | `content.js` attempts `document.querySelector(selector)` anyway; if it returns null, highlight is skipped and instruction-only is shown |
 | Screenshot capture fails (PDF, `chrome://` page, etc.) | `background.js` catches the error; extension shows "This page type isn't supported." |
-| Backend unreachable (not started) | `content.js` fetch timeout/error; extension shows "Could not connect to Guidely. Please start the backend." |
+| Backend unreachable (not started) | `content.js` fetch timeout/error; extension shows "Could not connect to Lumineer. Please start the backend." |
 | `selector` is null | Sidebar shows instruction; highlight overlay is not rendered |
 
 ---
@@ -270,7 +270,7 @@ For follow-up turns, prior assistant instructions are prepended as conversation 
 ## 8. File Structure
 
 ```
-guidely/
+Guidely/
 ├── extension/
 │   ├── manifest.json
 │   ├── background.js
@@ -300,7 +300,7 @@ The highlight is a `<div>` injected into the page body. Its size and position ar
 ```javascript
 const rect = element.getBoundingClientRect();
 const overlay = document.createElement('div');
-overlay.id = 'guidely-highlight';
+overlay.id = 'lumineer-highlight';
 Object.assign(overlay.style, {
   position: 'fixed',
   top:    `${rect.top    - 4}px`,
@@ -310,7 +310,7 @@ Object.assign(overlay.style, {
   border: '3px solid #FF6B35',   /* warm orange — visible, not alarming */
   borderRadius: '8px',
   pointerEvents: 'none',         /* doesn't interfere with clicks */
-  animation: 'guidely-pulse 1.2s ease-in-out infinite',
+  animation: 'lumineer-pulse 1.2s ease-in-out infinite',
   zIndex: '2147483647',          /* always on top */
 });
 document.body.appendChild(overlay);
@@ -338,7 +338,7 @@ The 4px padding on each side prevents the ring from sitting flush against the el
 - Multilingual support beyond English (string table is i18n-ready; translations deferred).
 - Mobile browsers (Chrome desktop only).
 - Cloud deployment or remote model hosting.
-- Phone-call audio listening — the user-suggested "listen to my phone call" feature is **explicitly deferred** for legal-consent and platform-permission reasons (Chrome can't tap system audio without an OS-level helper). We support voice *to/from* Guidely only; we do not record phone calls.
+- Phone-call audio listening — the user-suggested "listen to my phone call" feature is **explicitly deferred** for legal-consent and platform-permission reasons (Chrome can't tap system audio without an OS-level helper). We support voice *to/from* Lumineer only; we do not record phone calls.
 - Cross-device sync.
 - Automatic actions without confirmation (Level 3 autonomy is gated behind a setting and a per-action prompt).
 - User accounts; everything is single-user, single-machine.
@@ -368,11 +368,11 @@ uvicorn main:app --port 8000
 
 1. Open a Medicare enrollment form (or similar government form)
 2. Click "Help me"
-3. Guidely highlights the first name field: *"Type your first name in the box that says 'First Name' — it's near the top of the page."*
+3. Lumineer highlights the first name field: *"Type your first name in the box that says 'First Name' — it's near the top of the page."*
 4. User fills it in, clicks "Help me" again
-5. Guidely moves to next field, highlights it
+5. Lumineer moves to next field, highlights it
 6. Repeat through form completion
-7. Final step: Guidely highlights the submit button: *"You're almost done. Click the green 'Submit' button to send your form."*
+7. Final step: Lumineer highlights the submit button: *"You're almost done. Click the green 'Submit' button to send your form."*
 
 This demo hits: form guidance, highlight accuracy, step-by-step patience, and the emotional payoff of completion.
 
@@ -381,12 +381,12 @@ This demo hits: form guidance, highlight accuracy, step-by-step patience, and th
 A single 90-second demo that shows every feature module:
 
 1. **Open** a fake state-DMV homepage. The persistent **agent sidebar** is empty.
-2. User types: *"Help me renew my driver's license."* → Guidely (Level 1, "highlight only") replies with a 4-step plan and **highlights** the "Renew Online" link.
+2. User types: *"Help me renew my driver's license."* → Lumineer (Level 1, "highlight only") replies with a 4-step plan and **highlights** the "Renew Online" link.
 3. User clicks; page navigates. Sidebar **survives the navigation** with the full thread + plan visible. Step 1 is now ✓.
-4. On the renewal form, user clicks the mic — speaks: *"What does 'Class C endorsement' mean?"* Guidely **explains in plain English**, aloud.
+4. On the renewal form, user clicks the mic — speaks: *"What does 'Class C endorsement' mean?"* Lumineer **explains in plain English**, aloud.
 5. The form contains a phishy "Pay $4.99 service fee at this gift-card portal" cross-link. **Vigilance Mode** flashes a calm warning before the user clicks.
 6. User asks: *"Read this for me bro,"* and points the webcam at their old license. **Camera understanding** extracts name, DOB, license number, and offers to fill the form — *"Shall I fill these in or shall I guide you?"*
-7. User says "Fill them in but ask before submitting." Guidely fills the form (Level 2), highlights submit, and asks one final confirmation. User says yes; submission complete. Step 4 ✓.
+7. User says "Fill them in but ask before submitting." Lumineer fills the form (Level 2), highlights submit, and asks one final confirmation. User says yes; submission complete. Step 4 ✓.
 8. User reloads the tab to test memory. Sidebar comes back with the entire thread + completed plan, with a "Conversation complete — clear?" prompt.
 
 Every one of the 8 feature modules appears. Total runtime ~90 s.
@@ -423,7 +423,7 @@ The product surface is decomposed into **8 feature modules**. Each module has a 
 **F4 — Voice Interaction Layer.** Built on the browser's `SpeechRecognition` (input) and `SpeechSynthesis` (output). Privacy-critical:
 
 - Mic is **off by default**. A clearly labelled button toggles it.
-- Wake-word ("Hey Guidely") is *opt-in only*; default is push-to-talk.
+- Wake-word ("Hey Lumineer") is *opt-in only*; default is push-to-talk.
 - Visual indicator any time the mic is hot.
 - **Hard out-of-scope:** listening to phone calls, recording other applications. Web Speech can only access the browser's mic stream. Chrome cannot legally tap system audio in MV3 without an OS helper, and recording phone conversations has wiretap-law implications. We do not implement it.
 
@@ -486,7 +486,7 @@ If we later add **cross-device sync** or **server-driven workflow agents**, Redi
 
 ### 14.3 Schema
 
-Stored at `chrome.storage.local["guidely.v1"]`:
+Stored at `chrome.storage.local["lumineer.v1"]`:
 
 ```ts
 type Store = {
@@ -558,7 +558,7 @@ type WorkflowStep = {
 When and only when Phase 5 (server-driven workflow agents) ships, we add a thin Redis layer:
 
 - `redis:7-alpine` in a `docker-compose.yml`, **off by default**.
-- Backend reads `GUIDELY_REDIS_URL` env var; if unset, all workflow logic runs in-memory per request (still works, just less efficient).
+- Backend reads `LUMINEER_REDIS_URL` env var; if unset, all workflow logic runs in-memory per request (still works, just less efficient).
 - Stores: workflow state machines keyed by `conversation_id`, model call cache for vigilance triage (TTL 1 hour), recent DOM-summary embeddings (TTL 24 h).
 - **Never** stores raw chat content, screenshots, or PII. If Redis disappears, the client's `chrome.storage.local` fully reconstructs the conversation; only execution metadata is lost.
 
@@ -577,7 +577,7 @@ A `docker-compose.dev.yml` is added under `tools/redis/` for the day we need it;
 
 ```
 ┌─ Sidebar (380px wide, full height) ─────────────────────────┐
-│  [💡 Guidely]  [+] [🎤] [⚙]                              [✕]│
+│  [💡 Lumineer]  [+] [🎤] [⚙]                              [✕]│
 │  ─────────────────────────────────────────────────────────  │
 │  Recent ▾                                                   │
 │   • Renew driver's license     · 4 steps · 2 done           │
@@ -614,8 +614,8 @@ A `docker-compose.dev.yml` is added under `tools/redis/` for the day we need it;
 ### 15.1 Goals
 
 1. The user states a goal in natural language ("renew my license", "appeal a denied claim").
-2. Guidely produces a **plan** (3–8 steps) and surfaces it next to the chat.
-3. Guidely guides through each step, page after page, marking them complete as they happen.
+2. Lumineer produces a **plan** (3–8 steps) and surfaces it next to the chat.
+3. Lumineer guides through each step, page after page, marking them complete as they happen.
 4. The user can change autonomy mid-workflow.
 5. The plan is persisted in the conversation (§14.3) so a reload doesn't lose progress.
 
@@ -672,8 +672,8 @@ When the model determines a step's evidence is satisfied (e.g. URL matches, succ
 |---|---|---|
 | **0** | **Explain only** | No selectors returned, no highlights. Pure plain-English narration of what the page is. |
 | **1** | **Highlight next step** | (Default for elderly users.) Returns selector; pulsing ring; user always clicks. |
-| **2** | **Fill + ask before submit** | Guidely fills form fields it is confident about; pauses and asks before any button click. Fields marked sensitive (passwords, SSN, payment) are *never* auto-filled. |
-| **3** | **Act with per-action confirm** | Guidely will click non-destructive buttons after a 3-second hold-to-confirm prompt. Hard-disabled on financial transactions, account deletion, irreversible actions. |
+| **2** | **Fill + ask before submit** | Lumineer fills form fields it is confident about; pauses and asks before any button click. Fields marked sensitive (passwords, SSN, payment) are *never* auto-filled. |
+| **3** | **Act with per-action confirm** | Lumineer will click non-destructive buttons after a 3-second hold-to-confirm prompt. Hard-disabled on financial transactions, account deletion, irreversible actions. |
 
 Level is per-conversation, persisted in `Conversation.settings.autonomyLevel`. Switching mid-thread is allowed; the change is announced in the chat.
 
@@ -752,7 +752,7 @@ All patterns use anchored character classes; **no user input is ever interpolate
 ### 17.2 Privacy & consent
 
 - Mic is **off by default**. The mic button has 3 states: off (gray), armed (orange dot), recording (red pulsing).
-- Push-to-talk by default. Wake-word ("Hey Guidely") is opt-in in settings and requires re-confirmation every 7 days.
+- Push-to-talk by default. Wake-word ("Hey Lumineer") is opt-in in settings and requires re-confirmation every 7 days.
 - A persistent on-page indicator shows when the mic is hot.
 - Voice transcripts are streamed into the chat as user messages — they go through the same pipeline as typed input.
 - We **do not** record audio files. The browser API streams text-only; we never persist raw audio.
@@ -772,7 +772,7 @@ The user-suggested "listen to my phone call where the user can start/stop" is **
 
 1. Chrome MV3 cannot access the operating system's audio stream — only the browser's mic stream — without an OS-level helper.
 2. Recording phone calls has serious legal-consent implications that vary by jurisdiction (US wiretap laws, GDPR, etc.).
-3. A safer alternative *is* in scope: voice input *to* Guidely. The senior speaks to Guidely about a confusing page; Guidely answers. We do not record any other party.
+3. A safer alternative *is* in scope: voice input *to* Lumineer. The senior speaks to Lumineer about a confusing page; Lumineer answers. We do not record any other party.
 
 If the team wants to revisit this, it would require: (a) a native helper app, (b) a per-call explicit consent flow, (c) jurisdiction-aware disclaimers, (d) a security review. None of those fit a 2-week hackathon.
 

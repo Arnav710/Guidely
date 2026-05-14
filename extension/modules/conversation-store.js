@@ -1,7 +1,7 @@
 /**
  * conversation-store.js
  *
- * Single source of truth for all persistent Guidely state.
+ * Single source of truth for all persistent Lumineer state.
  * Reads/writes chrome.storage.local. Broadcasts to all subscribers when the
  * store changes — including changes made in other tabs (via chrome.storage.onChanged).
  *

@@ -1,4 +1,4 @@
-# Guidely Implementation Plan
+# Lumineer Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -13,7 +13,7 @@
 ## File Map
 
 ```
-guidely/
+Guidely/
 ├── extension/
 │   ├── manifest.json          # MV3 manifest: permissions, content scripts, background
 │   ├── background.js          # Service worker: handles CAPTURE messages, captureVisibleTab
@@ -134,7 +134,7 @@ class AnalyzeResponse(BaseModel):
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Guidely Backend")
+app = FastAPI(title="Lumineer Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -235,7 +235,7 @@ Expected: `ImportError` — `prompt` module doesn't exist.
 import json
 from models import DomElement, HistoryEntry
 
-SYSTEM_PROMPT = """You are Guidely, a patient and friendly assistant helping elderly people use the internet.
+SYSTEM_PROMPT = """You are Lumineer, a patient and friendly assistant helping elderly people use the internet.
 You are given:
   1. A screenshot of the webpage the user is currently viewing
   2. A list of interactive elements currently on the page (their labels and CSS selectors)
@@ -544,7 +544,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from models import AnalyzeRequest, AnalyzeResponse
 from ollama_client import call_ollama, OllamaUnavailableError
 
-app = FastAPI(title="Guidely Backend")
+app = FastAPI(title="Lumineer Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -568,7 +568,7 @@ async def analyze(request: AnalyzeRequest):
             history=request.history,
         )
     except OllamaUnavailableError:
-        raise HTTPException(status_code=503, detail="Guidely is offline. Please make sure Ollama is running.")
+        raise HTTPException(status_code=503, detail="Lumineer is offline. Please make sure Ollama is running.")
 
     return AnalyzeResponse(
         instruction=result.get("instruction", "I couldn't figure out the next step. Try clicking 'Help me' again."),
@@ -617,7 +617,7 @@ git commit -m "feat: /analyze endpoint wired to ollama client"
 ```json
 {
   "manifest_version": 3,
-  "name": "Guidely",
+  "name": "Lumineer",
   "version": "1.0.0",
   "description": "AI browser co-pilot for seniors",
   "permissions": [
@@ -699,7 +699,7 @@ with open('extension/assets/icon.png', 'wb') as f:
 1. Open `chrome://extensions`
 2. Enable **Developer mode** (top right toggle)
 3. Click **Load unpacked** → select the `extension/` folder
-4. Verify Guidely appears in the list with no errors
+4. Verify Lumineer appears in the list with no errors
 5. Open any webpage — no visible changes yet (content.js doesn't exist yet)
 
 - [ ] **Step 5: Commit**
@@ -788,24 +788,24 @@ function buildDomMap() {
 }
 
 // Expose for manual testing in devtools console during development
-window.__guidely_buildDomMap = buildDomMap;
+window.__lumineer_buildDomMap = buildDomMap;
 ```
 
 - [ ] **Step 2: Reload the extension and verify the DOM serializer in DevTools**
 
-1. Reload extension at `chrome://extensions` (click the refresh icon on Guidely)
+1. Reload extension at `chrome://extensions` (click the refresh icon on Lumineer)
 2. Navigate to any form page (e.g. `https://www.w3schools.com/html/html_forms.asp`)
 3. Open DevTools Console and run:
 
 ```javascript
-window.__guidely_buildDomMap()
+window.__lumineer_buildDomMap()
 ```
 
 Expected: an array of objects with `id`, `tag`, `label`, `selector`, `visible` fields. Selectors should resolve correctly:
 
 ```javascript
 // Verify each selector resolves
-window.__guidely_buildDomMap().forEach(el => {
+window.__lumineer_buildDomMap().forEach(el => {
   const found = document.querySelector(el.selector);
   console.log(el.label, '->', found ? '✓' : '✗ MISSING', el.selector);
 });
@@ -835,7 +835,7 @@ Add the following after the DOM serializer section:
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const STYLES = `
-  #guidely-btn {
+  #lumineer-btn {
     position: fixed;
     bottom: 24px;
     right: 24px;
@@ -852,10 +852,10 @@ const STYLES = `
     box-shadow: 0 4px 16px rgba(0,0,0,0.25);
     transition: background 0.2s;
   }
-  #guidely-btn:hover { background: #e05a28; }
-  #guidely-btn:disabled { background: #aaa; cursor: not-allowed; }
+  #lumineer-btn:hover { background: #e05a28; }
+  #lumineer-btn:disabled { background: #aaa; cursor: not-allowed; }
 
-  #guidely-sidebar {
+  #lumineer-sidebar {
     position: fixed;
     top: 0;
     right: -360px;
@@ -872,14 +872,14 @@ const STYLES = `
     box-sizing: border-box;
     overflow-y: auto;
   }
-  #guidely-sidebar.open { right: 0; }
-  #guidely-sidebar-title {
+  #lumineer-sidebar.open { right: 0; }
+  #lumineer-sidebar-title {
     font-size: 20px;
     font-weight: 700;
     color: #FF6B35;
     margin-bottom: 16px;
   }
-  #guidely-instruction {
+  #lumineer-instruction {
     font-size: 18px;
     line-height: 1.6;
     color: #222;
@@ -889,12 +889,12 @@ const STYLES = `
     border-radius: 8px;
     margin-bottom: 16px;
   }
-  #guidely-status {
+  #lumineer-status {
     font-size: 14px;
     color: #888;
     margin-top: auto;
   }
-  #guidely-close {
+  #lumineer-close {
     position: absolute;
     top: 16px;
     right: 16px;
@@ -905,24 +905,24 @@ const STYLES = `
     color: #aaa;
   }
 
-  @keyframes guidely-pulse {
+  @keyframes lumineer-pulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 53, 0.5); }
     50%       { box-shadow: 0 0 0 8px rgba(255, 107, 53, 0); }
   }
-  #guidely-highlight {
+  #lumineer-highlight {
     position: fixed;
     pointer-events: none;
     border: 3px solid #FF6B35;
     border-radius: 8px;
     z-index: 2147483647;
-    animation: guidely-pulse 1.2s ease-in-out infinite;
+    animation: lumineer-pulse 1.2s ease-in-out infinite;
   }
 `;
 
 function injectStyles() {
-  if (document.getElementById('guidely-styles')) return;
+  if (document.getElementById('lumineer-styles')) return;
   const style = document.createElement('style');
-  style.id = 'guidely-styles';
+  style.id = 'lumineer-styles';
   style.textContent = STYLES;
   document.head.appendChild(style);
 }
@@ -930,7 +930,7 @@ function injectStyles() {
 // ─── Highlight Overlay ────────────────────────────────────────────────────────
 
 function clearHighlight() {
-  const existing = document.getElementById('guidely-highlight');
+  const existing = document.getElementById('lumineer-highlight');
   if (existing) existing.remove();
 }
 
@@ -947,7 +947,7 @@ function highlightElement(selector) {
   setTimeout(() => {
     const rect = el.getBoundingClientRect();
     const overlay = document.createElement('div');
-    overlay.id = 'guidely-highlight';
+    overlay.id = 'lumineer-highlight';
     Object.assign(overlay.style, {
       top:    `${rect.top    - 4}px`,
       left:   `${rect.left  - 4}px`,
@@ -961,20 +961,20 @@ function highlightElement(selector) {
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 
 function getOrCreateSidebar() {
-  let sidebar = document.getElementById('guidely-sidebar');
+  let sidebar = document.getElementById('lumineer-sidebar');
   if (sidebar) return sidebar;
 
   sidebar = document.createElement('div');
-  sidebar.id = 'guidely-sidebar';
+  sidebar.id = 'lumineer-sidebar';
   sidebar.innerHTML = `
-    <button id="guidely-close" title="Close">✕</button>
-    <div id="guidely-sidebar-title">Guidely</div>
-    <div id="guidely-instruction"></div>
-    <div id="guidely-status"></div>
+    <button id="lumineer-close" title="Close">✕</button>
+    <div id="lumineer-sidebar-title">Lumineer</div>
+    <div id="lumineer-instruction"></div>
+    <div id="lumineer-status"></div>
   `;
   document.body.appendChild(sidebar);
 
-  document.getElementById('guidely-close').addEventListener('click', () => {
+  document.getElementById('lumineer-close').addEventListener('click', () => {
     sidebar.classList.remove('open');
     clearHighlight();
   });
@@ -984,8 +984,8 @@ function getOrCreateSidebar() {
 
 function showSidebar(instruction, status = '') {
   const sidebar = getOrCreateSidebar();
-  document.getElementById('guidely-instruction').textContent = instruction;
-  document.getElementById('guidely-status').textContent = status;
+  document.getElementById('lumineer-instruction').textContent = instruction;
+  document.getElementById('lumineer-status').textContent = status;
   sidebar.classList.add('open');
 }
 
@@ -994,18 +994,18 @@ function showSidebar(instruction, status = '') {
 const history = [];
 
 function getOrCreateButton() {
-  let btn = document.getElementById('guidely-btn');
+  let btn = document.getElementById('lumineer-btn');
   if (btn) return btn;
 
   btn = document.createElement('button');
-  btn.id = 'guidely-btn';
+  btn.id = 'lumineer-btn';
   btn.textContent = '💡 Help me';
   document.body.appendChild(btn);
   return btn;
 }
 
 async function onHelpClick() {
-  const btn = document.getElementById('guidely-btn');
+  const btn = document.getElementById('lumineer-btn');
   btn.disabled = true;
   btn.textContent = 'Thinking…';
   clearHighlight();
@@ -1034,14 +1034,14 @@ async function onHelpClick() {
       body: JSON.stringify({ screenshot, dom_map: domMap, history }),
     });
     if (res.status === 503) {
-      showSidebar('Guidely is offline. Please make sure Ollama is running.');
+      showSidebar('Lumineer is offline. Please make sure Ollama is running.');
       btn.disabled = false;
       btn.textContent = '💡 Help me';
       return;
     }
     data = await res.json();
   } catch {
-    showSidebar('Could not connect to Guidely. Please start the backend.');
+    showSidebar('Could not connect to Lumineer. Please start the backend.');
     btn.disabled = false;
     btn.textContent = '💡 Help me';
     return;
@@ -1133,7 +1133,7 @@ git commit -m "feat: floating button, sidebar, and highlight overlay in content.
   </style>
 </head>
 <body>
-  <h1>Guidely</h1>
+  <h1>Lumineer</h1>
   <p>AI browser co-pilot for seniors.<br>Click <strong>💡 Help me</strong> on any page.</p>
   <div id="status">
     <div id="status-dot"></div>
@@ -1170,9 +1170,9 @@ checkBackend();
 - [ ] **Step 3: Reload the extension and verify the popup**
 
 1. Reload extension at `chrome://extensions`
-2. Click the Guidely toolbar icon
+2. Click the Lumineer toolbar icon
 3. Verify:
-   - Popup opens with Guidely title and description
+   - Popup opens with Lumineer title and description
    - With backend running (`uvicorn main:app --port 8000`): green dot + "Backend online ✓"
    - With backend not running: red dot + "Backend offline — start uvicorn"
 
@@ -1238,8 +1238,8 @@ Expected: JSON with `instruction`, `element_label`, `selector` fields.
 
 - [ ] **Step 4: Test error states**
 
-- Stop the backend → click "Help me" → verify sidebar shows "Could not connect to Guidely. Please start the backend."
-- Stop Ollama but keep backend running → click "Help me" → verify sidebar shows "Guidely is offline. Please make sure Ollama is running."
+- Stop the backend → click "Help me" → verify sidebar shows "Could not connect to Lumineer. Please start the backend."
+- Stop Ollama but keep backend running → click "Help me" → verify sidebar shows "Lumineer is offline. Please make sure Ollama is running."
 
 - [ ] **Step 5: Commit**
 
@@ -1258,7 +1258,7 @@ git commit -m "feat: end-to-end integration verified"
 - [ ] **Step 1: Write `README.md`**
 
 ```markdown
-# Guidely
+# Lumineer
 
 > AI browser co-pilot for seniors — local-first, powered by Gemma 4.
 
@@ -1298,7 +1298,7 @@ uvicorn main:app --port 8000
 1. Open `chrome://extensions`
 2. Enable **Developer mode** (top right)
 3. Click **Load unpacked** → select the `extension/` folder
-4. The Guidely icon will appear in your toolbar
+4. The Lumineer icon will appear in your toolbar
 
 ### 4. Use it
 

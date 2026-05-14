@@ -1,8 +1,8 @@
-# Guidely — Feature Inventory & Extension Architecture
+# Lumineer — Feature Inventory & Extension Architecture
 
 > **Revised 2026-05-06.** Major scope expansion. The feature surface is now organized around **8 named modules** (see §2.0); the chat panel is being upgraded to a **Cursor-IDE-style persistent agent sidebar** with workflows, voice, vigilance, and document/camera understanding. See the design spec for full requirements: [`docs/superpowers/specs/2026-05-03-guidely-design.md`](superpowers/specs/2026-05-03-guidely-design.md) (§§13–21).
 
-This document steps back from the current codebase to list **what we want Guidely to do**, propose a **maintainable architecture** for the Chrome extension (and how it fits the backend), and outline **phased implementation** so we can evolve without painting ourselves into a corner.
+This document steps back from the current codebase to list **what we want Lumineer to do**, propose a **maintainable architecture** for the Chrome extension (and how it fits the backend), and outline **phased implementation** so we can evolve without painting ourselves into a corner.
 
 ---
 
@@ -76,9 +76,9 @@ The detailed status / target tables below (§§2.1–2.6) feed the modules above
 | E2 | **Central config** — backend base URL, debug trace flag, max history | infra | ⚠️ | Hard-coded constants |
 | E3 | **`chrome.storage.local`** for settings + chat history + workflows | F1 | ❌ | New: source of truth for conversations |
 | E4 | **Single message protocol** between content ↔ background (typed envelopes) | infra | ⚠️ | Ad-hoc `{ type: 'CAPTURE' }` |
-| E5 | **Optional devtools / logging** hook (debug flag only) | infra | ⚠️ | Partial (`GUIDELY_DEBUG_TRACE`) |
+| E5 | **Optional devtools / logging** hook (debug flag only) | infra | ⚠️ | Partial (`LUMINEER_DEBUG_TRACE`) |
 | E6 | **i18n-ready strings** (or at least string table) | infra | ❌ | English hard-coded |
-| E7 | **Styles** isolated (shadow DOM or named CSS prefix — already prefixed `guidely-*`) | infra | ⚠️ | Global `<style>` injection |
+| E7 | **Styles** isolated (shadow DOM or named CSS prefix — already prefixed `lumineer-*`) | infra | ⚠️ | Global `<style>` injection |
 | E8 | **Persistent agent sidebar** — Cursor-style: conversation list + active thread + plan view | F1+F6 | ❌ | New, top of P1 backlog |
 | E9 | **`MutationObserver` + `webNavigation` listener** for vigilance triggers | F5 | ❌ | New |
 | E10 | **`getUserMedia` camera surface** for document capture | F8 | ❌ | New, separate permission prompt |
@@ -89,7 +89,7 @@ The detailed status / target tables below (§§2.1–2.6) feed the modules above
 
 | ID | Feature | Module | Status | Target |
 |----|---------|--------|--------|--------|
-| B1 | **`analyze_guidely`** pipeline isolated from FastAPI route handlers | F2 | ⚠️ | Logic in `ollama_client.py` |
+| B1 | **`analyze_lumineer`** pipeline isolated from FastAPI route handlers | F2 | ⚠️ | Logic in `ollama_client.py` |
 | B2 | **Prompt registry** — base / tools / follow-up / explainer / vigilance / vision prompts | F2/F5/F7/F8 | ⚠️ | Single `prompt.py` strings |
 | B3 | **Tool registry** — register `web_search`, future tools | infra | ⚠️ | Explicit function + dispatch |
 | B4 | **Structured logging** + optional request IDs for support | infra | ⚠️ | Partial |
@@ -191,7 +191,7 @@ backend/
 │   ├── vision.py              # F8    — POST /vision/doc
 │   └── platform.py            # GET /health, /models, POST /models/active
 ├── services/
-│   ├── analyze.py             # validate request → analyze_guidely → response model
+│   ├── analyze.py             # validate request → analyze_lumineer → response model
 │   ├── explain.py             # text-only plain-English transformer
 │   ├── vigilance.py           # triage (e2b) + deep explanation (e4b)
 │   ├── workflow.py            # plan generator + step state machine; pluggable cache backend
@@ -209,7 +209,7 @@ backend/
 ├── cache/
 │   ├── __init__.py            # `get_cache()` returns InMemoryCache or RedisCache
 │   ├── memory.py              # default; works out of the box, no infra
-│   └── redis.py               # used iff GUIDELY_REDIS_URL is set
+│   └── redis.py               # used iff LUMINEER_REDIS_URL is set
 ├── models.py                  # Pydantic models for all routes
 ├── tools_bridge.py            # imports ../tools, executes tool_requests
 └── tests/
@@ -234,7 +234,7 @@ sequenceDiagram
   participant Ollama
   participant DDG as tools/web_search
 
-  User->>Content: Ask Guidely
+  User->>Content: Ask Lumineer
   Content->>Content: buildDomMap()
   Content->>BG: CAPTURE (screenshot)
   BG-->>Content: base64 PNG
@@ -318,7 +318,7 @@ The original P1–P6 (refactor-only) phases collapse into infra-prep work that r
 | **P6** | **Document & Camera Understanding** — webcam capture + lasso crop. | F8 | "Read this for me bro" demo. |
 | **P7** | Polish — Side Panel API option, full a11y audit (font-scale, motion-reduce, focus management), cross-tab live sync, error/empty states. | infra | Feels finished. |
 | **P8** | Refactor sweep — split monolithic `content.js`, central config, typed message protocol, prompt registry, backend router split. | infra | Maintainable code (was old P1–P6). |
-| **P9** | Optional Redis cache for workflow state + vigilance memoization. Enabled via `GUIDELY_REDIS_URL`; off by default. | infra | Server-side perf only when needed. |
+| **P9** | Optional Redis cache for workflow state + vigilance memoization. Enabled via `LUMINEER_REDIS_URL`; off by default. | infra | Server-side perf only when needed. |
 
 **Hackathon priority (May 6 → May 18):** P0 ✅ → P1 → P2 → P3, with P4/P5/P6 as parallel demo-bonus slices. P7+ is post-judging polish.
 
@@ -344,7 +344,7 @@ If we ever need cross-device sync, that is the moment to revisit Redis (or any s
 1. **Bundler or native ES modules?** — Native ES modules in MV3 content scripts are supported in modern Chrome; we start native, add esbuild only if load-order issues bite.
 2. **Shadow DOM for sidebar?** — Strong style isolation; slightly harder keyboard focus management. **Lean toward yes**, since we'll inject across many host sites and don't want their CSS to bleed in. Decide in P1.
 3. **Side Panel API vs injected `<div>`?** — Chrome Side Panel keeps the panel out of the page's DOM (better isolation, doesn't scroll with the page) but is a separate window context. Plan: build the sidebar logic against an interface that supports both backends; ship injected `<div>` first, add Side Panel in P7.
-4. **Phone-call listening?** — Out of scope. Not technically possible in MV3 without an OS helper, and recording calls has wiretap-law implications. We listen *to* Guidely (browser mic) only.
+4. **Phone-call listening?** — Out of scope. Not technically possible in MV3 without an OS helper, and recording calls has wiretap-law implications. We listen *to* Lumineer (browser mic) only.
 5. **Autonomy Level 3 default?** — No. Level 1 (highlight) is the safe default for elderly users. Level 3 stays opt-in with hard rails (§15.5 in spec).
 
 ---
