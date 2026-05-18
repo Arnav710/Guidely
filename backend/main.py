@@ -56,7 +56,7 @@ from prompt import (
     CAMERA_FRAME_PROMPT,
 )
 from agent import run_agent_start, run_agent_step, stream_agent_step
-from camera_demo import grab_rtsp_frame_png_async
+from camera_secrets import grab_rtsp_frame_png_async
 
 logging.basicConfig(
     level=logging.INFO,
