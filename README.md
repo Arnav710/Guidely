@@ -134,6 +134,26 @@ Family members can install the Chrome extension on their own devices and point i
 
 ---
 
+## Local Runtime Testing
+
+Lumineer was tested across multiple local hardware setups to understand how well it works as a private home/WAN AI assistant. The table below shows observed results where measured, and conservative estimates where exact token counts were not recorded.
+
+| Machine type | Model/runtime setup | Token speed | Tested / expected simultaneous users | Notes |
+|---|---:|---:|---:|---|
+| Raspberry Pi 5, 16GB RAM, NVMe | Ollama + Gemma 4 edge model | ~15 tok/sec measured | 1 active user | Works as a low-cost local hub. Good for one user, short summaries, email vigilance, and camera checks. Not ideal for many simultaneous heavy requests. |
+| Older laptop with GTX 1050 Ti GPU | Ollama + Gemma 4 edge model | ~20–35 tok/sec estimated | ~3 active users | Good low-cost household server. GPU acceleration helps, but the 1050 Ti’s limited VRAM means larger models may partially fall back to system RAM. |
+| 2025 MacBook Pro | Ollama + Gemma 4 edge model | Very fast; ~60–120+ tok/sec estimated depending on chip/model | 6 devices tested with Vigilance Mode | Best tested setup. Handled multiple devices on the same WAN using the Chrome extension, including repeated vigilance scans, without noticeable slowdown. |
+
+### Deployment takeaway
+
+Lumineer does not require cloud inference. It can run on a single local machine and serve every browser on the same home network.
+
+- A **Raspberry Pi 5 + NVMe** is enough for a single-user private assistant.
+- An **older GPU laptop** is practical for a small household.
+- A **modern MacBook Pro or mini PC** can support multiple devices using Lumineer at the same time.
+
+All browser context, screenshots, camera frames, and chat history remain inside the user’s local system or local WAN.
+
 ## Requirements
 
 - macOS / Linux (Windows untested)
