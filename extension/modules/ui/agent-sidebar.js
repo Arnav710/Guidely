@@ -21,6 +21,13 @@ import {
 } from './chat-thread.js';
 import { mountComposer } from './composer.js';
 import { renderConversationList } from './conversation-list.js';
+import {
+  loadBackendConfig,
+  saveBackendConfig,
+  pingBackend,
+  getBackendDisplay,
+  getBackendHostPort,
+} from '../backend-config.js';
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 
@@ -66,10 +73,70 @@ const SIDEBAR_CSS = `
   #g-tagline {
     font-size: 11px;
     color: #aaa;
-    margin: 0 0 8px;
+    margin: 0 0 6px;
     font-weight: 400;
     letter-spacing: 0.01em;
   }
+
+  #g-backend-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #888;
+    margin: 0 0 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #g-backend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ccc;
+    flex-shrink: 0;
+    transition: background 0.25s;
+  }
+  #g-backend-dot.g-connected { background: #27ae60; }
+  #g-backend-dot.g-disconnected { background: #e74c3c; }
+  #g-backend-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #g-backend-edit,
+  #g-backend-save {
+    background: none;
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+    font-size: 11px;
+    color: #888;
+    cursor: pointer;
+    padding: 2px 7px;
+    font-family: inherit;
+    flex-shrink: 0;
+  }
+  #g-backend-edit:hover,
+  #g-backend-save:hover { border-color: #FF6B35; color: #FF6B35; }
+  #g-backend-save {
+    color: #FF6B35;
+    border-color: #ffd5c3;
+    font-weight: 600;
+  }
+  #g-backend-save.g-saving { opacity: 0.6; pointer-events: none; }
+  #g-backend-fields {
+    display: none;
+    align-items: center;
+    gap: 4px;
+    margin: 0 0 8px;
+    width: 100%;
+  }
+  #g-backend-fields.g-visible { display: flex; }
+  #g-backend-fields input {
+    font-size: 11px;
+    padding: 4px 6px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #444;
+    background: #fff;
+  }
+  #g-backend-host { flex: 1; min-width: 0; }
+  #g-backend-port { width: 56px; }
 
   /* Agent status badge shown in the header when the loop is running. */
   #g-agent-status {
@@ -630,6 +697,69 @@ let _activeConvId = null;
 // When the agent finishes (status → idle/done/error), we do one clean re-render.
 let _agentRunning = false;
 
+function _setBackendDot(sidebar, connected) {
+  const dot = sidebar.querySelector('#g-backend-dot');
+  if (!dot) return;
+  dot.classList.toggle('g-connected', connected);
+  dot.classList.toggle('g-disconnected', !connected);
+}
+
+async function _refreshBackendConnection(sidebar) {
+  await loadBackendConfig();
+  const label = sidebar.querySelector('#g-backend-label');
+  if (label) label.textContent = getBackendDisplay();
+  const ok = await pingBackend();
+  _setBackendDot(sidebar, ok);
+}
+
+function _wireBackendControls(sidebar) {
+  if (sidebar.dataset.backendInit === '1') return;
+  sidebar.dataset.backendInit = '1';
+
+  const row = sidebar.querySelector('#g-backend-row');
+  const fields = sidebar.querySelector('#g-backend-fields');
+  const label = sidebar.querySelector('#g-backend-label');
+  const hostIn = sidebar.querySelector('#g-backend-host');
+  const portIn = sidebar.querySelector('#g-backend-port');
+  const editBtn = sidebar.querySelector('#g-backend-edit');
+  const saveBtn = sidebar.querySelector('#g-backend-save');
+  if (!row || !fields || !editBtn || !saveBtn || !hostIn || !portIn) return;
+
+  void _refreshBackendConnection(sidebar);
+
+  editBtn.addEventListener('click', async () => {
+    await loadBackendConfig();
+    const { host, port } = getBackendHostPort();
+    hostIn.value = host;
+    portIn.value = String(port);
+    row.style.display = 'none';
+    fields.hidden = false;
+    fields.classList.add('g-visible');
+    hostIn.focus();
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.classList.add('g-saving');
+    saveBtn.textContent = '…';
+    try {
+      const url = await saveBackendConfig(hostIn.value, portIn.value);
+      if (label) label.textContent = getBackendDisplay();
+      const ok = await pingBackend(url);
+      _setBackendDot(sidebar, ok);
+      fields.hidden = true;
+      fields.classList.remove('g-visible');
+      row.style.display = '';
+      saveBtn.title = ok ? 'Server connected' : 'Saved — server not reachable';
+    } catch {
+      _setBackendDot(sidebar, false);
+      saveBtn.title = 'Invalid host or port';
+    } finally {
+      saveBtn.classList.remove('g-saving');
+      saveBtn.textContent = 'Save';
+    }
+  });
+}
+
 /**
  * Mount the persistent agent sidebar into the current page.
  * Safe to call multiple times (idempotent — reuses existing DOM element).
@@ -678,6 +808,16 @@ export async function mountSidebar({ onSubmit, onSidebarClose } = {}) {
           <span id="g-agent-status" role="status"></span>
         </h2>
         <p id="g-tagline">Your internet companion</p>
+        <div id="g-backend-row" aria-label="Backend server">
+          <span id="g-backend-dot" title="Server connection"></span>
+          <span id="g-backend-label">localhost:8000</span>
+          <button type="button" id="g-backend-edit" title="Edit server address">Edit</button>
+        </div>
+        <div id="g-backend-fields" hidden>
+          <input id="g-backend-host" type="text" placeholder="Host" aria-label="Server host" autocomplete="off" spellcheck="false">
+          <input id="g-backend-port" type="number" placeholder="Port" aria-label="Server port" min="1" max="65535">
+          <button type="button" id="g-backend-save" title="Save and test connection">Save</button>
+        </div>
         <button type="button" id="g-conv-toggle" aria-expanded="false">
           <span id="g-conv-toggle-icon">▾</span> Conversations
         </button>
@@ -701,9 +841,11 @@ export async function mountSidebar({ onSubmit, onSidebarClose } = {}) {
       sidebar.querySelector('#g-conv-toggle-icon').textContent = _convPanelOpen ? '▴' : '▾';
       if (_convPanelOpen) _renderConvList();
     });
+
   }
 
   _sidebarEl = sidebar;
+  _wireBackendControls(sidebar);
 
   await store.init();
   let active = await store.getActive();

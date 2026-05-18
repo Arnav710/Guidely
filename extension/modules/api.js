@@ -3,14 +3,16 @@
  * All functions throw on network error or non-OK status (with a user-friendly message).
  */
 
-const BACKEND = 'http://localhost:8000';
+import { getBackendBase, pingBackend } from './backend-config.js';
+
 const TIMEOUT_MS = 120_000;
 
 async function _post(path, body) {
+  const backend = await getBackendBase();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(`${BACKEND}${path}`, {
+    const res = await fetch(`${backend}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -111,8 +113,9 @@ export async function agentStepStream(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 240_000); // 4 min ceiling
 
+  const backend = await getBackendBase();
   try {
-    const res = await fetch(`${BACKEND}/agent/step/stream`, {
+    const res = await fetch(`${backend}/agent/step/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -313,12 +316,7 @@ export async function vigilanceScan({
   return _post('/vigilance/scan', body);
 }
 
-/** GET /health — backend liveness check. */
+/** GET /ping — backend connectivity check. */
 export async function checkHealth() {
-  try {
-    const res = await fetch(`${BACKEND}/health`, { signal: AbortSignal.timeout(3000) });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return pingBackend();
 }
