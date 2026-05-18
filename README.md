@@ -178,6 +178,7 @@ ollama pull gemma4:31b    # ~20 GB — dense 31B
 ```
 
 The backend auto-picks the best **installed** Gemma 4 tag (order: 31b → 26b → **e4b** → e2b → …).
+Use e4b for best results. 
 
 ### 2. Start the backend
 
@@ -186,7 +187,8 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn main:app --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8000 ## To allow multiple users to connect
+uvicorn main:app --port 8000 ## For single connection
 ```
 
 ### 3. Load the extension
@@ -196,6 +198,7 @@ uvicorn main:app --port 8000
 3. Click **Load unpacked** → select the `extension/` folder
 4. The Lumineer icon appears in your toolbar
 5. If Chrome shows a permission prompt, **Allow** — Lumineer needs broad site access so `captureVisibleTab` can screenshot normal pages (e.g. google.com). Screenshots are only sent to your local backend.
+6. If you want to connect more than one user, please find the IP of the host running the backend and edit it in the top of the extension. A green icon indicates a successful connection. Refer to performnce table to determine max number of connections. 
 
 ### 4. Use it
 
