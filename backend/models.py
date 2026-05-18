@@ -275,6 +275,26 @@ class SummarizeRequest(BaseModel):
 class SummarizeResponse(BaseModel):
     summary: str
     model_used: Optional[str] = None
+    # Populated by /camera/describe so the client can show the still used for vision.
+    camera_frame_base64: Optional[str] = Field(
+        None,
+        description="PNG frame (base64) sent to the vision model, when applicable.",
+    )
+
+
+class CameraDescribeRequest(BaseModel):
+    """Demo: door-camera frame + optional user question (Ask mode)."""
+
+    question: Optional[str] = Field(
+        None,
+        max_length=500,
+        description="What the user wants to know about the camera view.",
+    )
+
+    @field_validator("question", mode="before")
+    @classmethod
+    def sanitize_question(cls, v: Any) -> Optional[str]:
+        return _strip_surrogates(v)
 
 
 # ── Guide mode (highlight-only mode) ─────────────────────────────────────────

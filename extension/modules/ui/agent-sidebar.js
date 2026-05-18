@@ -300,6 +300,30 @@ const SIDEBAR_CSS = `
     font-size: 15.5px;
     box-shadow: 0 2px 8px rgba(255,107,53,0.08);
   }
+  .g-msg-stack .g-msg-text {
+    margin: 0 0 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .g-msg-camera-wrap {
+    margin: 0;
+    padding: 0;
+  }
+  .g-msg-camera-frame {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    max-height: 220px;
+    object-fit: contain;
+    border-radius: 8px;
+    border: 1px solid rgba(0,0,0,0.12);
+    background: #0f172a;
+  }
+  .g-msg-camera-caption {
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: #64748b;
+  }
   .g-msg-error {
     align-self: flex-start;
     background: #fff5f5;

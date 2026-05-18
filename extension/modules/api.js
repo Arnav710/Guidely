@@ -265,6 +265,15 @@ export async function summarizePage({
 }
 
 /**
+ * POST /camera/describe — demo: one RTSP frame + optional question → plain-English description.
+ */
+export async function describeCameraDemo({ question = '' } = {}) {
+  return _post('/camera/describe', {
+    question: question ? String(question).slice(0, 500) : null,
+  });
+}
+
+/**
  * POST /guide — guide mode: identify the one thing the user should click.
  */
 export async function guideMode({

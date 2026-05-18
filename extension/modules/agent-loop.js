@@ -24,7 +24,7 @@
  */
 
 import * as store from './conversation-store.js';
-import { agentStart, agentStepStream, extendWorkflow, summarizePage, guideMode, vigilanceScan } from './api.js';
+import { agentStart, agentStepStream, extendWorkflow, summarizePage, describeCameraDemo, guideMode, vigilanceScan } from './api.js';
 
 // Safety ceiling: stop the loop after this many tool calls to prevent infinite loops.
 // Backend also forces `done` around iteration 18 when `loop_iteration` is sent.
@@ -193,6 +193,18 @@ export function getElementsInSection(sectionId) {
   return _extractElements(sectionEl || document.body, sectionId);
 }
 
+/** True if `el` is part of the extension chrome (sidebar, float button, vigilance popups). */
+function _isUnderLumineerExtensionUI(el) {
+  if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+  try {
+    if (el.id === 'lumineer-btn') return true;
+    if (el.closest('#lumineer-btn')) return true;
+    if (el.closest('#g-sidebar')) return true;
+    if (el.closest('.lumineer-vigil-popup-wrap')) return true;
+  } catch { /* ignore */ }
+  return false;
+}
+
 function _extractElements(containerEl, sectionId) {
   const INTERACTIVE = 'a, button, input, select, textarea, [role="button"], [tabindex="0"]';
   let raw = [];
@@ -202,6 +214,7 @@ function _extractElements(containerEl, sectionId) {
   for (const el of raw) {
     if (elements.length >= 30) break;
     try {
+      if (_isUnderLumineerExtensionUI(el)) continue;
       if (!_isVisible(el)) continue;
       const label = _getLabel(el);
       const tag = el.tagName.toLowerCase();
@@ -261,6 +274,7 @@ export function searchPage(query, options = {}) {
   for (const el of candidates) {
     try {
       if (sidebar && sidebar.contains(el)) continue;
+      if (_isUnderLumineerExtensionUI(el)) continue;
 
       const text = (
         el.getAttribute('aria-label') ||
@@ -593,11 +607,14 @@ export async function captureScreenshot() {
 async function _autoCapture() {
   const sidebarEl = document.getElementById('g-sidebar');
   const floatBtn = document.getElementById('lumineer-btn');
+  const vigilPopups = Array.from(document.querySelectorAll('.lumineer-vigil-popup-wrap'));
   const prevSidebar = sidebarEl?.style.visibility ?? '';
   const prevBtn = floatBtn?.style.visibility ?? '';
+  const prevPopupVis = vigilPopups.map((el) => el.style.visibility ?? '');
 
   if (sidebarEl) sidebarEl.style.visibility = 'hidden';
   if (floatBtn) floatBtn.style.visibility = 'hidden';
+  vigilPopups.forEach((el) => { el.style.visibility = 'hidden'; });
 
   // Two rAF + 30 ms to let the compositor process the visibility change.
   await new Promise((r) =>
@@ -609,6 +626,9 @@ async function _autoCapture() {
 
   if (sidebarEl) sidebarEl.style.visibility = prevSidebar;
   if (floatBtn) floatBtn.style.visibility = prevBtn;
+  vigilPopups.forEach((el, i) => {
+    el.style.visibility = prevPopupVis[i] || '';
+  });
 
   const sections = getPageSections();
   return { screenshot, sections };
@@ -679,6 +699,75 @@ function _wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 // ── Agent loop public API ─────────────────────────────────────────────────────
 
+// ── Ask mode: fixed RTSP camera (kitchen / entry / outdoor demo) ───────────────
+
+/**
+ * True when the question is about the physical home environment (outdoors, door,
+ * kitchen appliances, stove safety, etc.) and should use the fixed RTSP camera —
+ * not the browser tab. Ask (summarize) mode routes to POST /camera/describe.
+ *
+ * Skips routing when the user is clearly asking only about the current webpage/screen.
+ */
+export function userWantsDoorCameraDescription(text) {
+  const t = (text || '').toLowerCase().trim();
+  if (t.length < 6) return false;
+
+  const kitchenOrAppliance =
+    /\b(stoves?|ovens?|ranges?|cooktops?|burners?|hob)\b/.test(t) ||
+    (/\b(microwave|kettle|toasters?|coffee makers?|air fryers?)\b/.test(t) &&
+      /\b(on|off|left on|plugged|unplugged|check|make sure)\b/.test(t)) ||
+    (/\bkitchen\b/.test(t) &&
+      /\b(check|see|look|make sure|verify|smoke|fire|safe|on|off|stove|oven|burner|appliance)\b/.test(t));
+
+  const physicalWorld =
+    /\b(outside|outdoors|out front|front yard|backyard|back yard|driveway|porch|doorstep)\b/.test(t) ||
+    /\b(my door|the door|at my door|front door|my front door|at my front door|at the front door|by my door)\b/.test(t) ||
+    /\b(yard|lawn|garden|sidewalk|street|mailbox|garage|parking|walkway|curb)\b/.test(t) ||
+    /\b(package|delivery|visitor|someone outside|anyone outside|car in the driveway|vehicle in)\b/.test(t) ||
+    /\b(ups|fedex|usps|dhl)\b/.test(t) ||
+    /\b(weather|raining|snowing|rain|snow|wind|storm|hail|cloudy|foggy|humid|cold out|hot out|dark out)\b/.test(t) ||
+    /\b(in front of (my |the )?(house|door|yard|garage|porch|walk))\b/.test(t) ||
+    /\b(outside my (house|door|window)|around my (house|yard)|from my porch|off my porch)\b/.test(t) ||
+    /\b(real world|physical world|in real life|in person|out my window)\b/.test(t) ||
+    /\b(neighbor|next door|across the street|out back)\b/.test(t);
+
+  const physicalOrHome = physicalWorld || kitchenOrAppliance;
+
+  const cameraHardware =
+    /\b(camera|rtsp|cctv|tapo|door cam|doorcam|security cam|outdoor cam|video feed|live feed|doorbell|webcam)\b/.test(t);
+
+  // Tab / browser UI only — keep the screenshot path unless they also mean home/camera/appliances.
+  const webUiCue =
+    /\b(this page|this tab|this website|this screen|on (my |the )?screen|the webpage|browser tab|this pdf|this document)\b/.test(t);
+  if (webUiCue && !cameraHardware && !physicalOrHome) return false;
+
+  const wantsDescription =
+    /\b(describe|what do you see|what can you see|see|look at|show me|notice|spot|check on|check)\b/.test(t) ||
+    /\b(can you|could you|do you)\s+see\b/.test(t) ||
+    /\b(what'?s|what is|what are)\b/.test(t) ||
+    /\b(is there|are there|anyone|anything|what'?s happening|going on)\b/.test(t) ||
+    /\b(tell me what|tell me if|tell me how|tell me about)\b/.test(t) ||
+    /\b(make sure|please check|ensure|verify|confirm)\b/.test(t);
+
+  const cameraInContext =
+    cameraHardware &&
+    (physicalOrHome ||
+      wantsDescription ||
+      /\b(my|our|the) (camera|doorbell|feed|tapo)\b/.test(t) ||
+      /\b(from|on|via) (the |my )?camera\b/.test(t));
+
+  if (cameraInContext) return true;
+  if (physicalOrHome && wantsDescription) return true;
+
+  if (
+    /\b(what'?s it like outside|how'?s the weather|anything happening outside|who'?s outside|what'?s outside)\b/.test(t)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 // ── Summarize mode (one-shot) ─────────────────────────────────────────────────
 
 /**
@@ -695,6 +784,37 @@ export async function runSummarize(conversationId, userQuestion, callbacks = {})
 
   await store.setAgentStatus(conversationId, 'running');
   onStatusChange?.('running');
+
+  if (userWantsDoorCameraDescription(userQuestion)) {
+    _lumineerLog('camera:route', {
+      reason: 'Ask mode: home / physical question → POST /camera/describe',
+      preview: String(userQuestion || '').slice(0, 160),
+    });
+    onMessage?.({
+      role: 'system',
+      content: 'Fetching a snapshot from your home camera…',
+    });
+    try {
+      const result = await describeCameraDemo({ question: (userQuestion || '').trim() });
+      const summary = result?.summary || 'No description returned. Is ffmpeg installed on the Lumineer server and can it reach the camera?';
+      const frame = result?.camera_frame_base64 || null;
+      onMessage?.({
+        role: 'assistant',
+        content: summary,
+        camera_frame_base64: frame,
+      });
+    } catch (err) {
+      _lumineerLog('camera:describe:error', { message: err?.message || String(err) });
+      onError?.(`Camera: ${err.message}`);
+      await store.setAgentStatus(conversationId, 'error');
+      onStatusChange?.('error');
+      return;
+    }
+    await store.setAgentStatus(conversationId, 'idle');
+    onDone?.();
+    return;
+  }
+
   const isQuestion = (userQuestion || '').trim().length > 0;
   onMessage?.({ role: 'system', content: isQuestion ? 'Looking at your screen to answer…' : 'Reading what\'s on your screen…' });
 
@@ -917,8 +1037,30 @@ export function stopVigilanceMode(conversationId, callbacks = {}, opts = {}) {
   }
 }
 
+function _collectVisiblePageTextForVigilance(maxChars) {
+  const parts = [];
+  const walk = (node) => {
+    if (parts.join('').length >= maxChars) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const parent = node.parentElement;
+      if (!parent || _isUnderLumineerExtensionUI(parent)) return;
+      const t = (node.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t) parts.push(t);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (_isUnderLumineerExtensionUI(node)) return;
+    const st = window.getComputedStyle(node);
+    if (st.display === 'none' || st.visibility === 'hidden' || st.opacity === '0') return;
+    for (const child of node.childNodes) walk(child);
+  };
+  try {
+    walk(document.body);
+  } catch { /* ignore */ }
+  return parts.join(' ').replace(/[\uD800-\uDFFF]/g, '').slice(0, maxChars);
+}
+
 function _collectVigilanceDom() {
-  const sidebarEl = document.getElementById('g-sidebar');
   const selectorMap = {};
   const allElements = [];
   const sections = getPageSections();
@@ -927,7 +1069,7 @@ function _collectVigilanceDom() {
     for (const el of (secElements?.elements || [])) {
       try {
         const node = document.querySelector(el.selector);
-        if (node && sidebarEl && sidebarEl.contains(node)) continue;
+        if (!node || _isUnderLumineerExtensionUI(node)) continue;
       } catch { /* ignore */ }
       const safeLabel = (el.label || '').replace(/[\uD800-\uDFFF]/g, '').trim();
       const safeSelector = (el.selector || '').replace(/[\uD800-\uDFFF]/g, '');
@@ -951,9 +1093,7 @@ async function _runOneVigilanceScan(conversationId, callbacks = {}) {
   const { onVigilanceFlags, onError } = callbacks;
   const { screenshot } = await _autoCapture();
   const { selectorMap, domMap } = _collectVigilanceDom();
-  const pageText = (document.body?.innerText || '')
-    .replace(/[\uD800-\uDFFF]/g, '')
-    .slice(0, 8000);
+  const pageText = _collectVisiblePageTextForVigilance(8000);
   try {
     const result = await vigilanceScan({
       screenshot,
@@ -984,7 +1124,8 @@ export function startVigilanceMode(conversationId, callbacks = {}) {
   _vigilanceActive = true;
   callbacks.onMessage?.({
     role: 'system',
-    content: 'Vigilance on: checking every 10 seconds for pressure tactics, money requests, odd links, and other red flags. Click the Vigilance button again to stop.',
+    content:
+      'Vigilance on: the page is checked every 10 seconds for pressure tactics, money requests, odd links, and other red flags. Click the red **Stop** button (bottom-right) to turn it off.',
   });
 
   const scheduleNext = (delayMs) => {

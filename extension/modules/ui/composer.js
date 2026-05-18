@@ -67,7 +67,8 @@ export function mountComposer(rootEl, { onSend } = {}) {
     });
     if (mode === 'summarize') {
       ta.placeholder = SUMMARIZE_PLACEHOLDER;
-      hint.textContent = 'Enter to send · Shift+Enter for new line';
+      hint.textContent =
+        'Kitchen, stove, door, or outdoor questions use your home camera; page questions use your screen. Enter to send · Shift+Enter for new line';
     } else if (mode === 'vigilance') {
       ta.placeholder = VIGILANCE_PLACEHOLDER;
       hint.textContent = 'Starts immediately · Click Stop to stop · Not legal advice';

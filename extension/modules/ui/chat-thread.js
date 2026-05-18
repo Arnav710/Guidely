@@ -216,6 +216,35 @@ function _makeBubble(msg) {
   const div = document.createElement('div');
   div.className = `g-msg ${ROLE_CLASS[msg.role] ?? 'g-msg-assistant'}`;
   div.setAttribute('data-msg-id', msg.id || '');
+
+  const frame = msg.camera_frame_base64 || msg.cameraFrameBase64;
+  if (frame && msg.role === 'assistant') {
+    const wrap = document.createElement('div');
+    wrap.className = 'g-msg-stack';
+    if (msg.content) {
+      const p = document.createElement('p');
+      p.className = 'g-msg-text';
+      p.textContent = msg.content;
+      wrap.appendChild(p);
+    }
+    const fig = document.createElement('figure');
+    fig.className = 'g-msg-camera-wrap';
+    const img = document.createElement('img');
+    img.className = 'g-msg-camera-frame';
+    img.alt = 'Still frame from your home camera used for this answer';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.src = `data:image/png;base64,${frame}`;
+    const cap = document.createElement('figcaption');
+    cap.className = 'g-msg-camera-caption';
+    cap.textContent = 'Frame sent to the assistant';
+    fig.appendChild(img);
+    fig.appendChild(cap);
+    wrap.appendChild(fig);
+    div.appendChild(wrap);
+    return div;
+  }
+
   div.textContent = msg.content || '';
   return div;
 }

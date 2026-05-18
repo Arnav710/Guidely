@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 from fastapi import FastAPI, HTTPException, Query
@@ -24,6 +25,7 @@ from models import (
     AgentStepResponse,
     SummarizeRequest,
     SummarizeResponse,
+    CameraDescribeRequest,
     GuideModeRequest,
     GuideModeResponse,
     VigilanceScanRequest,
@@ -51,8 +53,10 @@ from prompt import (
     SUMMARIZE_PROMPT,
     GUIDE_MODE_PROMPT,
     VIGILANCE_PROMPT,
+    CAMERA_FRAME_PROMPT,
 )
 from agent import run_agent_start, run_agent_step, stream_agent_step
+from camera_demo import grab_rtsp_frame_png_async
 
 logging.basicConfig(
     level=logging.INFO,
@@ -407,6 +411,77 @@ async def summarize(request: SummarizeRequest):
         model,
     )
     return SummarizeResponse(summary=summary, model_used=model)
+
+
+@app.post("/camera/describe", response_model=SummarizeResponse)
+async def camera_describe(request: CameraDescribeRequest):
+    """
+    Demo: grab one frame from the hardcoded Tapo RTSP feed and describe it with the vision model.
+    Intended for Ask mode when the user asks about their door / outdoor camera.
+    """
+    try:
+        png_bytes = await grab_rtsp_frame_png_async()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("camera RTSP capture failed")
+        raise HTTPException(status_code=503, detail="Could not capture camera frame.") from exc
+
+    screenshot_b64 = base64.b64encode(png_bytes).decode("ascii")
+    if len(screenshot_b64) < MIN_SCREENSHOT_B64_CHARS:
+        raise HTTPException(status_code=502, detail="Captured frame was too small to use.")
+
+    q = (request.question or "").strip()
+    if not q:
+        q = "Describe what you see in this camera view (kitchen / entry / door area as installed)."
+    user_text = (
+        "This is a single frame from the user's fixed home security camera (often kitchen or entry — NOT a browser tab).\n"
+        f"The user asks: {q}\n"
+        "Answer in plain English."
+    )
+
+    b64_len = len(screenshot_b64)
+    logger.info(
+        "camera/describe [debug] frame: png_bytes=%s b64_chars=%s question_preview=%r",
+        len(png_bytes),
+        b64_len,
+        q[:120],
+    )
+
+    from ollama_client import get_active_model as _get_model
+    model_before = _get_model()
+    logger.info(
+        "camera/describe [debug] calling Ollama multimodal model=%s user_text_chars=%s",
+        model_before,
+        len(user_text),
+    )
+
+    try:
+        raw = await call_ollama_multimodal(
+            CAMERA_FRAME_PROMPT,
+            user_text,
+            screenshot_b64=screenshot_b64,
+            expect_json=False,
+        )
+    except OllamaUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    summary = (raw or "").strip()
+    if not summary:
+        summary = "I couldn't make sense of the camera image. Try again with better lighting or check the camera feed."
+
+    model_after = _get_model()
+    logger.info(
+        "camera/describe [debug] Ollama returned ok model=%s response_chars=%s summary_preview=%r",
+        model_after,
+        len(raw or ""),
+        (summary[:160] + "…") if len(summary) > 160 else summary,
+    )
+    return SummarizeResponse(
+        summary=summary,
+        model_used=model_after,
+        camera_frame_base64=screenshot_b64,
+    )
 
 
 @app.post("/guide", response_model=GuideModeResponse)

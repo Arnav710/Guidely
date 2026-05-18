@@ -34,8 +34,17 @@ const BTN_STYLES = `
   #g-sidebar.g-open ~ #lumineer-btn {
     display: none !important;
   }
+  /* Vigilance: floating button becomes Stop (sidebar is closed). */
   #lumineer-btn.lumineer-btn--vigilance-stop {
-    display: none !important;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: #c0392b;
+    box-shadow: 0 4px 18px rgba(192, 57, 43, 0.45);
+  }
+  #lumineer-btn.lumineer-btn--vigilance-stop:hover {
+    background: #a93226;
   }
 
   /* Vigilance mode — single summary popup fixed bottom-right. */
@@ -412,6 +421,7 @@ async function handleUserInput({ conversationId, text, mode = 'autonomous' }) {
   // For vigilance toggle, skip the user message bubble — the system message from
   // startVigilanceMode is enough feedback.
   if (mode === 'vigilance') {
+    _sidebar.close?.({ silent: true });
     _agentLoop.startVigilanceMode(conversationId, _makeCallbacks(conversationId));
     _syncFloatingButtonVigilance();
     _sidebar.setVigilanceActive?.(true);
@@ -545,7 +555,18 @@ function getOrCreateButton() {
 }
 
 function _syncFloatingButtonVigilance() {
-  // No-op: vigilance start/stop is controlled exclusively by the in-sidebar button.
+  const btn = document.getElementById('lumineer-btn');
+  if (!btn) return;
+  const active = !!_agentLoop?.isVigilanceActive?.();
+  if (active) {
+    btn.classList.add('lumineer-btn--vigilance-stop');
+    btn.textContent = '⏹ Stop';
+    btn.setAttribute('aria-label', 'Stop vigilance mode');
+  } else {
+    btn.classList.remove('lumineer-btn--vigilance-stop');
+    btn.textContent = '💡 Assist me';
+    btn.setAttribute('aria-label', 'Open Lumineer');
+  }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -586,7 +607,25 @@ async function init() {
   }
 
   const btn = getOrCreateButton();
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
+    if (_agentLoop?.isVigilanceActive?.()) {
+      clearVigilanceOverlays();
+      clearHighlight();
+      _stopSpeech();
+      const cur = await _store.getActive();
+      const cid = cur?.id;
+      if (cid) {
+        _agentLoop.stopVigilanceMode(cid, _makeCallbacks(cid));
+      } else {
+        _agentLoop.stopVigilanceMode('_', {
+          onVigilanceClear: clearVigilanceOverlays,
+          onMessage: () => {},
+        }, { silent: true });
+      }
+      _syncFloatingButtonVigilance();
+      _sidebar.setVigilanceActive?.(false);
+      return;
+    }
     _sidebar.open();
   });
 

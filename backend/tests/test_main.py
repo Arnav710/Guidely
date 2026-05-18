@@ -241,3 +241,29 @@ async def test_vigilance_scan_drops_short_explanations():
             response = await client.post("/vigilance/scan", json={"dom_summary": "1. [p] \"Hi\" — selector: p"})
     assert response.status_code == 200
     assert response.json()["flags"] == []
+
+
+@pytest.mark.asyncio
+async def test_camera_describe_uses_rtsp_frame_and_vision():
+    fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 300
+
+    async def _grab():
+        return fake_png
+
+    with patch("main.grab_rtsp_frame_png_async", side_effect=_grab):
+        mock_mm = AsyncMock(return_value="I see a porch and steps; no people are visible.")
+        with patch("main.call_ollama_multimodal", mock_mm):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(
+                    "/camera/describe",
+                    json={"question": "Describe what is in front of my door"},
+                )
+    assert response.status_code == 200
+    data = response.json()
+    assert "porch" in data["summary"].lower()
+    assert data.get("camera_frame_base64")
+    assert len(data["camera_frame_base64"]) >= 80
+    mock_mm.assert_awaited_once()
+    kwargs = mock_mm.await_args.kwargs
+    assert kwargs.get("screenshot_b64")
+    assert len(kwargs["screenshot_b64"]) >= 80
