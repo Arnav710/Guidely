@@ -1,28 +1,32 @@
-const BACKEND = 'http://localhost:8000';
+import {
+  loadBackendConfig,
+  getBackendBase,
+  pingBackend,
+} from './modules/backend-config.js';
 
-const dot      = document.getElementById('status-dot');
+const dot = document.getElementById('status-dot');
 const statusTxt = document.getElementById('status-text');
 const modelSel = document.getElementById('model-select');
 const applyBtn = document.getElementById('apply-btn');
 const feedback = document.getElementById('model-feedback');
 
 async function checkBackend() {
-  try {
-    const res = await fetch(`${BACKEND}/health`, { signal: AbortSignal.timeout(3000) });
-    if (res.ok) {
-      dot.className = 'online';
-      statusTxt.textContent = 'Backend online ✓';
-      return true;
-    }
-  } catch { /* fall through */ }
+  await loadBackendConfig();
+  const ok = await pingBackend();
+  if (ok) {
+    dot.className = 'online';
+    statusTxt.textContent = 'Backend online ✓';
+    return true;
+  }
   dot.className = 'offline';
   statusTxt.textContent = 'Backend offline — start uvicorn';
   return false;
 }
 
 async function loadModels() {
+  const backend = await getBackendBase();
   try {
-    const res = await fetch(`${BACKEND}/models`, { signal: AbortSignal.timeout(4000) });
+    const res = await fetch(`${backend}/models`, { signal: AbortSignal.timeout(4000) });
     if (!res.ok) throw new Error('non-ok');
     const data = await res.json();
 
@@ -49,8 +53,9 @@ applyBtn.addEventListener('click', async () => {
   applyBtn.disabled = true;
   feedback.textContent = 'Switching…';
   feedback.className = '';
+  const backend = await getBackendBase();
   try {
-    const res = await fetch(`${BACKEND}/models/active`, {
+    const res = await fetch(`${backend}/models/active`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: chosen }),

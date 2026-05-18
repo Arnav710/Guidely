@@ -80,6 +80,12 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/ping")
+async def ping():
+    """Lightweight liveness check for extension LAN connectivity."""
+    return {"ok": True}
+
+
 @app.get("/models", response_model=ModelsResponse)
 async def get_models():
     """Return all Ollama models and the currently active model."""
